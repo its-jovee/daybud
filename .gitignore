@@ -7,3 +7,10 @@ outputs/
 *.xcuserstate
 xcuserdata/
 
+# Local Daybud user data and safety copies
+/.today-stack/
+/state.json
+/state.json.*
+/today.json
+/today.json.*
+/daybud-user-state*/
