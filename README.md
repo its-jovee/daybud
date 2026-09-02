@@ -1,68 +1,80 @@
-# Daybud
+<div align="center">
+  <img src="TodayStack/Resources/TodayStackIcon-Source.png" width="112" alt="Daybud app icon">
+  <h1>Daybud</h1>
+  <p><strong>Your tasks, habits, and focus timer — one click from the macOS menu bar.</strong></p>
+  <p>
+    <a href="https://github.com/its-jovee/daybud/releases/latest">Download for macOS</a>
+    ·
+    <a href="#how-it-works">How it works</a>
+    ·
+    <a href="#privacy">Private by default</a>
+  </p>
+  <img src="docs/media/daybud-today.png" width="420" alt="Daybud showing today's tasks and habit activity in the macOS menu bar">
+</div>
 
-Daybud is a native macOS menu-bar companion for today’s tasks and recurring habits. It keeps the current day close without adding another full-sized productivity window.
+## A calmer way to run today
 
-<p align="center">
-  <img src="TodayStack/Resources/TodayStackIcon-Source.png" width="128" alt="Daybud app icon">
-</p>
+Most task apps tell you what is unfinished. Most habit apps ask you to log the same work again.
 
-## Features
+Daybud connects the two. Finish **Write 500 words** and your **Write** habit moves forward automatically. Start a focus timer straight from **Ship the landing page**. Anything unfinished is waiting for you tomorrow — without duplicating it or turning your day into a backlog-management exercise.
 
-- Reorder tasks by dragging the task itself.
-- Automatically carry unfinished tasks into the next day without duplicating them.
-- Link tasks to habits so completing the task fulfills the habit.
-- Switch between active and completed tasks with staggered motion.
-- Check habits from a compact colored tile grid above the task list.
-- Track weekly habits at a glance with progress such as `2/3` and a softened completed state.
-- See the current month as a GitHub-style contribution heatmap.
-- Increase a day’s heat level by completing multiple tasks linked to the same habit.
-- Change habit icons and plan a linked task directly from a habit tile.
-- Start a customizable Pomodoro from any active task, with a native notification and sound when time is up.
-- Review 7-day, 30-day, or all-time task and focus statistics by habit.
-- Keep all data locally in human-readable JSON.
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/media/daybud-complete-task.gif" width="380" alt="Completing a task in Daybud moves it out of Active and updates progress">
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/media/daybud-start-focus.gif" width="380" alt="Starting a Pomodoro focus session from a task in Daybud">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Finish it once.</strong><br>Daybud moves it to Done and records the linked habit.</td>
+    <td align="center"><strong>Focus without setup.</strong><br>Press play on any task to begin a Pomodoro.</td>
+  </tr>
+</table>
 
-## Install
+## How it works
 
-Download the latest `Daybud.dmg` from [Releases](https://github.com/its-jovee/daybud/releases/latest), open it, and drag Daybud into Applications.
+1. Add the handful of things that matter today.
+2. Optionally connect a task to a habit such as **Move**, **Write**, or **Make**.
+3. Press play when you want a focus timer, or check the task off directly.
+4. Daybud updates the habit, strengthens that day's activity square, and keeps completed work out of the way.
 
-Daybud requires macOS 14 or later. It lives in the menu bar and intentionally has no regular Dock window.
+The result is a small loop that answers three useful questions at a glance: **What should I do next? What am I consistently investing in? Where did my time go?**
 
-## Build from source
+### The useful details
 
-Open `TodayStack.xcodeproj` in Xcode and run the `TodayStack` scheme. From a shell:
+- Drag a task itself to reorder it — no tiny handle required.
+- Switch between Active and Done without losing completed work.
+- See habits as compact, color-coded contribution grids.
+- Track goals such as “3 days per week” and soften habits once the goal is met.
+- Give a day more intensity by completing several tasks for the same habit.
+- Review task and focus activity over 7 days, 30 days, or all time.
+- Get a native notification and sound when a focus session finishes.
+- Carry unfinished tasks into the next day automatically.
+
+## Download
+
+Download the latest [`Daybud.dmg`](https://github.com/its-jovee/daybud/releases/latest), open it, and drag Daybud into Applications.
+
+Daybud requires **macOS 14 or later** and lives in the menu bar, so it intentionally has no regular Dock window.
+
+> Daybud is an early build. The current release is signed for development but not yet notarized for public distribution. If macOS blocks the first launch, right-click Daybud in Applications and choose **Open**.
+
+## Privacy
+
+Daybud has no account, cloud sync, analytics, or ads. Your tasks, habits, focus sessions, and history stay in a human-readable JSON file on your Mac.
+
+<details>
+<summary><strong>Build from source</strong></summary>
+
+Open `TodayStack.xcodeproj` in Xcode and run the `TodayStack` scheme, or build from Terminal:
 
 ```sh
 xcodebuild -scheme TodayStack -configuration Debug -destination 'platform=macOS' build
 ```
 
-## Local data
-
-The app stores its state in `~/.today-stack/state.json`. This legacy location is intentionally preserved so existing Daybud users keep all of their tasks, habits, history, and settings after the rename. An optional external plan is read from `~/.today-stack/today.json`; the app never writes that file.
-
-## Daily plan import
-
-`today.json` accepts only replace mode:
-
-```json
-{
-  "schemaVersion": 1,
-  "date": "2026-08-27",
-  "mode": "replace",
-  "tasks": [
-    { "id": "programming-study", "title": "Programming study", "habitSlug": "programming" }
-  ]
-}
-```
-
-`id` is optional (a stable generated UUID is used when omitted), `title` is required, and `habitSlug` is optional. A slug links a task to the habit with the same slug; unknown slugs leave the task unassociated. Matching IDs keep their completion state. An external agent can update the day with:
-
-```sh
-mkdir -p ~/.today-stack && cp sample-today.json ~/.today-stack/today.json
-```
-
-Reopen the menu-bar popover to import a changed file. Habit slugs are generated from the initial habit name and remain stable after renaming.
-
-## Tests
+Run the tests with:
 
 ```sh
 xcodebuild \
@@ -73,3 +85,37 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   test
 ```
+
+</details>
+
+<details>
+<summary><strong>Local data and daily plan import</strong></summary>
+
+Daybud stores its state in `~/.today-stack/state.json`. This legacy location is intentionally preserved so existing users keep their data after the rename.
+
+An optional external plan can be read from `~/.today-stack/today.json`; Daybud never writes that file. The file accepts replace mode:
+
+```json
+{
+  "schemaVersion": 1,
+  "date": "2026-09-02",
+  "mode": "replace",
+  "tasks": [
+    { "id": "write-500", "title": "Write 500 words", "habitSlug": "write" }
+  ]
+}
+```
+
+`id` is optional, `title` is required, and `habitSlug` is optional. A matching ID preserves completion state; a matching habit slug links the task to that habit. Reopen the menu-bar popover after changing the file.
+
+</details>
+
+## Contributing
+
+Daybud is a small native SwiftUI app, and thoughtful bug reports and focused pull requests are welcome. If an interaction feels heavier than the thing it helps you do, that is especially worth reporting.
+
+---
+
+<div align="center">
+  <sub>Made for people who want their task list to feel finite.</sub>
+</div>

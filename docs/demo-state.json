@@ -1,0 +1,93 @@
+{
+  "days": {
+    "2026-08-20": {
+      "date": "2026-08-20",
+      "tasks": [
+        { "habitID": "habit-make", "id": "old-01", "isCompleted": true, "lineageID": "old-01", "title": "Sketch the onboarding" },
+        { "habitID": "habit-make", "id": "old-02", "isCompleted": true, "lineageID": "old-02", "title": "Build the empty state" },
+        { "habitID": "habit-write", "id": "old-03", "isCompleted": true, "lineageID": "old-03", "title": "Write release notes" }
+      ]
+    },
+    "2026-08-24": {
+      "date": "2026-08-24",
+      "tasks": [
+        { "habitID": "habit-learn", "id": "old-04", "isCompleted": true, "lineageID": "old-04", "title": "Read one chapter" },
+        { "habitID": "habit-move", "id": "old-05", "isCompleted": true, "lineageID": "old-05", "title": "Walk after lunch" }
+      ]
+    },
+    "2026-08-27": {
+      "date": "2026-08-27",
+      "tasks": [
+        { "habitID": "habit-make", "id": "old-06", "isCompleted": true, "lineageID": "old-06", "title": "Polish the task animation" },
+        { "habitID": "habit-make", "id": "old-07", "isCompleted": true, "lineageID": "old-07", "title": "Fix keyboard navigation" },
+        { "habitID": "habit-make", "id": "old-08", "isCompleted": true, "lineageID": "old-08", "title": "Ship a test build" },
+        { "habitID": "habit-reset", "id": "old-09", "isCompleted": true, "lineageID": "old-09", "title": "Clear the desk" }
+      ]
+    },
+    "2026-08-31": {
+      "date": "2026-08-31",
+      "tasks": [
+        { "habitID": "habit-write", "id": "old-10", "isCompleted": true, "lineageID": "old-10", "title": "Morning pages" },
+        { "habitID": "habit-learn", "id": "old-11", "isCompleted": true, "lineageID": "old-11", "title": "Study motion design" }
+      ]
+    },
+    "2026-09-01": {
+      "date": "2026-09-01",
+      "tasks": [
+        { "habitID": "habit-move", "id": "old-12", "isCompleted": true, "lineageID": "old-12", "title": "Evening walk" },
+        { "habitID": "habit-make", "id": "old-13", "isCompleted": true, "lineageID": "old-13", "title": "Prototype the timer" },
+        { "habitID": "habit-write", "id": "old-14", "isCompleted": true, "lineageID": "old-14", "title": "Draft launch post" }
+      ]
+    },
+    "2026-09-02": {
+      "date": "2026-09-02",
+      "tasks": [
+        { "habitID": "habit-make", "id": "today-ship", "isCompleted": false, "lineageID": "today-ship", "title": "Ship the landing page" },
+        { "habitID": "habit-write", "id": "today-write", "isCompleted": false, "lineageID": "today-write", "title": "Write 500 words" },
+        { "habitID": "habit-move", "id": "today-walk", "isCompleted": false, "lineageID": "today-walk", "title": "Take a 20-minute walk" },
+        { "habitID": "habit-learn", "id": "today-read", "isCompleted": false, "lineageID": "today-read", "title": "Read one chapter" },
+        { "habitID": "habit-reset", "id": "today-inbox", "isCompleted": true, "lineageID": "today-inbox", "title": "Clear the inbox" },
+        { "habitID": "habit-make", "id": "today-review", "isCompleted": true, "lineageID": "today-review", "title": "Review the pull request" }
+      ]
+    }
+  },
+  "habits": [
+    { "frequency": { "target": 5, "type": "weeklyTarget" }, "iconName": "figure.walk", "id": "habit-move", "name": "Move", "slug": "move" },
+    { "frequency": { "type": "daily" }, "iconName": "hammer.fill", "id": "habit-make", "name": "Make", "slug": "make" },
+    { "frequency": { "target": 4, "type": "weeklyTarget" }, "iconName": "book.fill", "id": "habit-learn", "name": "Learn", "slug": "learn" },
+    { "frequency": { "type": "daily" }, "iconName": "pencil.line", "id": "habit-write", "name": "Write", "slug": "write" },
+    { "frequency": { "target": 3, "type": "weeklyTarget" }, "iconName": "leaf.fill", "id": "habit-reset", "name": "Reset", "slug": "reset" }
+  ],
+  "pomodoro": {
+    "activeTimer": null,
+    "records": [],
+    "settings": { "extensionDurationSeconds": 1500, "focusDurationSeconds": 1500 }
+  },
+  "schemaVersion": 2,
+  "sessions": [
+    { "date": "2026-08-04", "habitID": "habit-move", "id": "s01", "source": "manual" },
+    { "date": "2026-08-06", "habitID": "habit-make", "id": "s02", "source": "manual" },
+    { "date": "2026-08-08", "habitID": "habit-write", "id": "s03", "source": "manual" },
+    { "date": "2026-08-11", "habitID": "habit-learn", "id": "s04", "source": "manual" },
+    { "date": "2026-08-13", "habitID": "habit-move", "id": "s05", "source": "manual" },
+    { "date": "2026-08-14", "habitID": "habit-reset", "id": "s06", "source": "manual" },
+    { "date": "2026-08-17", "habitID": "habit-write", "id": "s07", "source": "manual" },
+    { "date": "2026-08-18", "habitID": "habit-learn", "id": "s08", "source": "manual" },
+    { "date": "2026-08-20", "habitID": "habit-make", "id": "s09", "source": "task", "taskID": "old-01" },
+    { "date": "2026-08-20", "habitID": "habit-make", "id": "s10", "source": "task", "taskID": "old-02" },
+    { "date": "2026-08-20", "habitID": "habit-write", "id": "s11", "source": "task", "taskID": "old-03" },
+    { "date": "2026-08-24", "habitID": "habit-learn", "id": "s12", "source": "task", "taskID": "old-04" },
+    { "date": "2026-08-24", "habitID": "habit-move", "id": "s13", "source": "task", "taskID": "old-05" },
+    { "date": "2026-08-27", "habitID": "habit-make", "id": "s14", "source": "task", "taskID": "old-06" },
+    { "date": "2026-08-27", "habitID": "habit-make", "id": "s15", "source": "task", "taskID": "old-07" },
+    { "date": "2026-08-27", "habitID": "habit-make", "id": "s16", "source": "task", "taskID": "old-08" },
+    { "date": "2026-08-27", "habitID": "habit-reset", "id": "s17", "source": "task", "taskID": "old-09" },
+    { "date": "2026-08-31", "habitID": "habit-write", "id": "s18", "source": "task", "taskID": "old-10" },
+    { "date": "2026-08-31", "habitID": "habit-learn", "id": "s19", "source": "task", "taskID": "old-11" },
+    { "date": "2026-09-01", "habitID": "habit-move", "id": "s20", "source": "task", "taskID": "old-12" },
+    { "date": "2026-09-01", "habitID": "habit-make", "id": "s21", "source": "task", "taskID": "old-13" },
+    { "date": "2026-09-01", "habitID": "habit-write", "id": "s22", "source": "task", "taskID": "old-14" },
+    { "date": "2026-09-02", "habitID": "habit-reset", "id": "s23", "source": "task", "taskID": "today-inbox" },
+    { "date": "2026-09-02", "habitID": "habit-make", "id": "s24", "source": "task", "taskID": "today-review" }
+  ]
+}
