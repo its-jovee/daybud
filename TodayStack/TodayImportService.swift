@@ -75,8 +75,15 @@ public enum TodayImportService {
             let habitID = imported.habitSlug.flatMap { slug in
                 state.habits.first(where: { $0.slug == slug })?.id
             }
-            let isCompleted = oldTasksByID[id]?.isCompleted ?? false
-            importedTasks.append(TaskItem(id: id, title: title, habitID: habitID, isCompleted: isCompleted))
+            let existingTask = oldTasksByID[id]
+            let isCompleted = existingTask?.isCompleted ?? false
+            importedTasks.append(TaskItem(
+                id: id,
+                lineageID: existingTask?.lineageID,
+                title: title,
+                habitID: habitID,
+                isCompleted: isCompleted
+            ))
         }
 
         var newState = state
@@ -119,7 +126,7 @@ public enum TodayImportService {
     }
 
     private static func validate(_ file: TodayImportFile) throws {
-        guard file.schemaVersion == AppState.currentSchemaVersion else {
+        guard file.schemaVersion == TodayImportFile.currentSchemaVersion else {
             throw TodayImportError.invalid("unsupported schemaVersion")
         }
         guard file.mode == "replace" else {

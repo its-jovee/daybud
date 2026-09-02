@@ -5,17 +5,40 @@ import Foundation
 public final class AppStore: ObservableObject {
     @Published public private(set) var state: AppState
     @Published public private(set) var errorMessage: String?
+    @Published public private(set) var focusClock: Date
 
     public let repository: JSONStateRepository
     public var calendar: Calendar
 
     private let nowProvider: () -> Date
+    private let focusNotificationScheduler: FocusNotificationScheduling
     private var persistenceBlocked = false
+    private var focusTicker: AnyCancellable?
 
-    public init(repository: JSONStateRepository = JSONStateRepository(), calendar: Calendar = .current, now: @escaping () -> Date = { Date() }) {
+    public convenience init(
+        repository: JSONStateRepository = JSONStateRepository(),
+        calendar: Calendar = .current,
+        now: @escaping () -> Date = { Date() }
+    ) {
+        self.init(
+            repository: repository,
+            calendar: calendar,
+            now: now,
+            focusNotificationScheduler: NativeFocusNotificationScheduler()
+        )
+    }
+
+    public init(
+        repository: JSONStateRepository,
+        calendar: Calendar,
+        now: @escaping () -> Date,
+        focusNotificationScheduler: FocusNotificationScheduling
+    ) {
         self.repository = repository
         self.calendar = calendar
         self.nowProvider = now
+        self.focusNotificationScheduler = focusNotificationScheduler
+        self.focusClock = now()
 
         do {
             self.state = try repository.load()
@@ -27,6 +50,8 @@ public final class AppStore: ObservableObject {
 
         if !persistenceBlocked {
             ensureTodayPlan(persist: true)
+            reconcileFocusTimer(at: focusClock)
+            synchronizeFocusNotification()
         }
     }
 
@@ -42,10 +67,6 @@ public final class AppStore: ObservableObject {
         todayPlan.tasks.first(where: { !$0.isCompleted })
     }
 
-    public var completedTodayCount: Int {
-        completedTaskCount + completedHabitCount
-    }
-
     public var completedTaskCount: Int {
         todayPlan.tasks.filter(\.isCompleted).count
     }
@@ -58,17 +79,27 @@ public final class AppStore: ObservableObject {
         !state.habits.isEmpty && completedHabitCount == state.habits.count
     }
 
-    public var totalTodayCount: Int {
-        todayPlan.tasks.count + state.habits.count
+    public var totalTaskCount: Int {
+        todayPlan.tasks.count
     }
 
     public var progressText: String {
-        "\(completedTodayCount)/\(totalTodayCount)"
+        "\(completedTaskCount)/\(totalTaskCount)"
     }
 
     public var menuBarLabel: String {
+        switch focusPresentation {
+        case .running(let task, let remainingSeconds, _, _, _),
+             .paused(let task, let remainingSeconds, _, _, _):
+            return "\(Self.focusTimeText(remainingSeconds)) · \(Self.compactTitle(task.titleSnapshot))"
+        case .awaitingDecision(let task, _, _):
+            return "Done? · \(Self.compactTitle(task.titleSnapshot))"
+        case .idle:
+            break
+        }
+
         let tasks = todayPlan.tasks
-        guard !tasks.isEmpty || !state.habits.isEmpty else { return "0/0 · Plan today" }
+        guard !tasks.isEmpty else { return "0/0 · Plan today" }
 
         if let task = currentTask {
             let title = task.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -77,17 +108,109 @@ public final class AppStore: ObservableObject {
             return "\(progressText) · \(title[..<end])…"
         }
 
-        if let habit = state.habits.first(where: { !isLoggedToday(habit: $0) }) {
-            return "\(progressText) · \(habit.name)"
-        }
-
         return "\(progressText) · Done"
+    }
+
+    public var focusPresentation: FocusPresentation {
+        PomodoroEngine.presentation(for: state.pomodoro, at: focusClock)
+    }
+
+    public var hasActiveFocusTimer: Bool {
+        state.pomodoro.activeTimer != nil
+    }
+
+    public var canMarkFocusedTaskDone: Bool {
+        guard let reference = focusedTaskReference else { return false }
+        return todayPlan.tasks.contains {
+            ($0.id == reference.occurrenceID || $0.lineageID == reference.lineageID) && !$0.isCompleted
+        }
+    }
+
+    public func statisticsSnapshot(period: StatisticsPeriod) -> StatisticsSnapshot {
+        StatisticsCalculator.snapshot(
+            state: state,
+            focusRecords: state.pomodoro.records,
+            period: period,
+            today: nowProvider(),
+            calendar: calendar
+        )
     }
 
     public func refresh() {
         guard !persistenceBlocked else { return }
         ensureTodayPlan(persist: true)
         importTodayPlan()
+        reconcileFocusTimer(at: nowProvider())
+    }
+
+    @discardableResult
+    public func startFocus(on task: TaskItem) -> Bool {
+        guard !persistenceBlocked, !task.isCompleted else { return false }
+        let now = nowProvider()
+        focusClock = now
+        let habit = task.habitID.flatMap { habitID in
+            state.habits.first(where: { $0.id == habitID })
+        }
+        let reference = FocusTaskReference(
+            occurrenceID: task.id,
+            lineageID: task.lineageID,
+            dateKey: todayDateKey,
+            titleSnapshot: task.title,
+            habitIDSnapshot: habit?.id,
+            habitNameSnapshot: habit?.name
+        )
+        guard PomodoroEngine.start(task: reference, runID: UUID().uuidString, at: now, state: &state.pomodoro) else {
+            errorMessage = "Finish or stop the current Pomodoro before starting another one."
+            return false
+        }
+        persist()
+        synchronizeFocusNotification()
+        updateFocusTicker()
+        return true
+    }
+
+    public func pauseFocus() {
+        guard !persistenceBlocked else { return }
+        let now = nowProvider()
+        focusClock = now
+        guard PomodoroEngine.pause(at: now, state: &state.pomodoro) else { return }
+        persist()
+        synchronizeFocusNotification()
+        updateFocusTicker()
+    }
+
+    public func resumeFocus() {
+        guard !persistenceBlocked else { return }
+        let now = nowProvider()
+        focusClock = now
+        guard PomodoroEngine.resume(at: now, state: &state.pomodoro) else { return }
+        persist()
+        synchronizeFocusNotification()
+        updateFocusTicker()
+    }
+
+    public func addMoreFocusTime() {
+        guard !persistenceBlocked else { return }
+        let now = nowProvider()
+        focusClock = now
+        guard PomodoroEngine.extend(at: now, state: &state.pomodoro) else { return }
+        persist()
+        synchronizeFocusNotification()
+        updateFocusTicker()
+    }
+
+    public func stopFocus() {
+        finishFocus(outcome: .stopped, markTaskDone: false)
+    }
+
+    public func markFocusedTaskDone() {
+        finishFocus(outcome: .completedTask, markTaskDone: true)
+    }
+
+    public func updatePomodoroSettings(_ settings: PomodoroSettings) {
+        guard !persistenceBlocked else { return }
+        state.pomodoro.settings = settings
+        persist()
     }
 
     @discardableResult
@@ -118,7 +241,9 @@ public final class AppStore: ObservableObject {
     }
 
     public func deleteTask(id: String) {
-        guard !persistenceBlocked, var plan = state.days[todayDateKey] else { return }
+        guard !persistenceBlocked, var plan = state.days[todayDateKey],
+              let task = plan.tasks.first(where: { $0.id == id }) else { return }
+        archiveFocusIfNeeded(for: task, outcome: .stopped)
         plan.tasks.removeAll(where: { $0.id == id })
         state.days[todayDateKey] = plan
         state.sessions.removeAll(where: { $0.taskID == id })
@@ -162,6 +287,9 @@ public final class AppStore: ObservableObject {
         plan.tasks[index] = task
         state.days[todayDateKey] = plan
         synchronizeTaskSession(taskID: task.id, date: todayDateKey, habitID: task.habitID, completed: completed)
+        if completed {
+            archiveFocusIfNeeded(for: task, outcome: .completedTask)
+        }
         persist()
     }
 
@@ -319,6 +447,14 @@ public final class AppStore: ObservableObject {
             let result = try TodayImportService.applying(data: data, to: state, calendar: calendar)
             guard result.changed else { return }
             state = result.state
+            if let reference = focusedTaskReference,
+               !todayPlan.tasks.contains(where: { taskMatches($0, reference: reference) }) {
+                let now = nowProvider()
+                focusClock = now
+                _ = PomodoroEngine.end(outcome: .stopped, at: now, state: &state.pomodoro)
+                synchronizeFocusNotification()
+                updateFocusTicker()
+            }
             persist()
         } catch {
             errorMessage = error.localizedDescription
@@ -331,8 +467,130 @@ public final class AppStore: ObservableObject {
 
     private func ensureTodayPlan(persist shouldPersist: Bool) {
         guard state.days[todayDateKey] == nil else { return }
-        state.days[todayDateKey] = DayPlan(date: todayDateKey)
+        let carriedTasks = mostRecentPlan(before: todayDateKey)?.tasks
+            .filter { !$0.isCompleted }
+            .map { task in
+                TaskItem(
+                    lineageID: task.lineageID,
+                    title: task.title,
+                    habitID: validHabitID(task.habitID)
+                )
+            } ?? []
+        state.days[todayDateKey] = DayPlan(date: todayDateKey, tasks: carriedTasks)
         if shouldPersist { persist() }
+    }
+
+    private var focusedTaskReference: FocusTaskReference? {
+        switch focusPresentation {
+        case .idle:
+            return nil
+        case .running(let task, _, _, _, _),
+             .paused(let task, _, _, _, _),
+             .awaitingDecision(let task, _, _):
+            return task
+        }
+    }
+
+    private func finishFocus(outcome: FocusOutcome, markTaskDone: Bool) {
+        guard !persistenceBlocked else { return }
+        let reference = focusedTaskReference
+        let now = nowProvider()
+        focusClock = now
+
+        if markTaskDone {
+            guard let reference,
+                  var plan = state.days[todayDateKey],
+                  let index = plan.tasks.firstIndex(where: { taskMatches($0, reference: reference) }),
+                  !plan.tasks[index].isCompleted else {
+                errorMessage = "This task is no longer active. End the Pomodoro to keep its focus time."
+                return
+            }
+            plan.tasks[index].isCompleted = true
+            let completedTask = plan.tasks[index]
+            state.days[todayDateKey] = plan
+            synchronizeTaskSession(
+                taskID: completedTask.id,
+                date: todayDateKey,
+                habitID: completedTask.habitID,
+                completed: true
+            )
+        }
+
+        guard PomodoroEngine.end(outcome: outcome, at: now, state: &state.pomodoro) != nil else { return }
+
+        persist()
+        synchronizeFocusNotification()
+        updateFocusTicker()
+    }
+
+    private func archiveFocusIfNeeded(for task: TaskItem, outcome: FocusOutcome) {
+        guard let reference = focusedTaskReference, taskMatches(task, reference: reference) else { return }
+        let now = nowProvider()
+        focusClock = now
+        _ = PomodoroEngine.end(outcome: outcome, at: now, state: &state.pomodoro)
+        synchronizeFocusNotification()
+        updateFocusTicker()
+    }
+
+    private func taskMatches(_ task: TaskItem, reference: FocusTaskReference) -> Bool {
+        task.id == reference.occurrenceID || task.lineageID == reference.lineageID
+    }
+
+    private func reconcileFocusTimer(at now: Date) {
+        focusClock = now
+        let reachedEnd = PomodoroEngine.tick(at: now, state: &state.pomodoro)
+        if reachedEnd {
+            persist()
+            synchronizeFocusNotification()
+            focusNotificationScheduler.playFallbackSoundIfNeeded()
+        }
+        updateFocusTicker()
+    }
+
+    private func synchronizeFocusNotification() {
+        guard case let .running(run, _, deadline, _, _)? = state.pomodoro.activeTimer else {
+            focusNotificationScheduler.cancelCompletion()
+            return
+        }
+        focusNotificationScheduler.scheduleCompletion(for: run.task, deadline: deadline)
+    }
+
+    private func updateFocusTicker() {
+        guard case .running? = state.pomodoro.activeTimer else {
+            focusTicker?.cancel()
+            focusTicker = nil
+            return
+        }
+        guard focusTicker == nil else { return }
+        focusTicker = Timer.publish(every: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.reconcileFocusTimer(at: self.nowProvider())
+            }
+    }
+
+    private static func focusTimeText(_ seconds: Int) -> String {
+        let clamped = max(0, seconds)
+        return String(format: "%02d:%02d", clamped / 60, clamped % 60)
+    }
+
+    private static func compactTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 24 else { return trimmed }
+        let end = trimmed.index(trimmed.startIndex, offsetBy: 21)
+        return "\(trimmed[..<end])…"
+    }
+
+    private func mostRecentPlan(before dateKey: String) -> DayPlan? {
+        guard let date = DateKey.date(from: dateKey, calendar: calendar) else { return nil }
+
+        return state.days.compactMap { key, plan -> (date: Date, plan: DayPlan)? in
+            guard let planDate = DateKey.date(from: key, calendar: calendar), planDate < date else { return nil }
+            return (planDate, plan)
+        }
+        .max { $0.date < $1.date }?
+        .plan
     }
 
     private func synchronizeTaskSession(taskID: String, date: String, habitID: String?, completed: Bool) {

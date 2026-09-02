@@ -17,6 +17,14 @@
 		A10000000000000000000008 /* TodayStackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* TodayStackTests.swift */; };
 		A10000000000000000000009 /* TodayStack.app in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* TodayStack.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000010 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* Assets.xcassets */; };
+		A10000000000000000000011 /* PomodoroModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* PomodoroModels.swift */; };
+		A10000000000000000000012 /* PomodoroEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* PomodoroEngine.swift */; };
+		A10000000000000000000013 /* PomodoroViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* PomodoroViews.swift */; };
+		A10000000000000000000014 /* StatisticsCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* StatisticsCalculator.swift */; };
+		A10000000000000000000015 /* StatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* StatisticsView.swift */; };
+		A10000000000000000000016 /* PomodoroEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* PomodoroEngineTests.swift */; };
+		A10000000000000000000017 /* StatisticsCalculatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* StatisticsCalculatorTests.swift */; };
+		A10000000000000000000018 /* PomodoroNotificationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* PomodoroNotificationScheduler.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +38,14 @@
 		A20000000000000000000008 /* TodayStackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayStackTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000000000000000000010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000011 /* PomodoroModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PomodoroModels.swift; sourceTree = "<group>"; };
+		A20000000000000000000012 /* PomodoroEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PomodoroEngine.swift; sourceTree = "<group>"; };
+		A20000000000000000000013 /* PomodoroViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PomodoroViews.swift; sourceTree = "<group>"; };
+		A20000000000000000000014 /* StatisticsCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsCalculator.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* StatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsView.swift; sourceTree = "<group>"; };
+		A20000000000000000000016 /* PomodoroEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PomodoroEngineTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000017 /* StatisticsCalculatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsCalculatorTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000018 /* PomodoroNotificationScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PomodoroNotificationScheduler.swift; sourceTree = "<group>"; };
 		A30000000000000000000001 /* TodayStack.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TodayStack.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A30000000000000000000002 /* TodayStackTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TodayStackTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -71,6 +87,12 @@
 				A20000000000000000000005 /* TodayImportService.swift */,
 				A20000000000000000000006 /* AppStore.swift */,
 				A20000000000000000000007 /* Views.swift */,
+				A20000000000000000000011 /* PomodoroModels.swift */,
+				A20000000000000000000012 /* PomodoroEngine.swift */,
+				A20000000000000000000013 /* PomodoroViews.swift */,
+				A20000000000000000000018 /* PomodoroNotificationScheduler.swift */,
+				A20000000000000000000014 /* StatisticsCalculator.swift */,
+				A20000000000000000000015 /* StatisticsView.swift */,
 				A20000000000000000000010 /* Assets.xcassets */,
 				A20000000000000000000009 /* Info.plist */,
 			);
@@ -81,6 +103,8 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000008 /* TodayStackTests.swift */,
+				A20000000000000000000016 /* PomodoroEngineTests.swift */,
+				A20000000000000000000017 /* StatisticsCalculatorTests.swift */,
 			);
 			path = TodayStackTests;
 			sourceTree = "<group>";
@@ -202,6 +226,12 @@
 				A10000000000000000000005 /* TodayImportService.swift in Sources */,
 				A10000000000000000000006 /* AppStore.swift in Sources */,
 				A10000000000000000000007 /* Views.swift in Sources */,
+				A10000000000000000000011 /* PomodoroModels.swift in Sources */,
+				A10000000000000000000012 /* PomodoroEngine.swift in Sources */,
+				A10000000000000000000013 /* PomodoroViews.swift in Sources */,
+				A10000000000000000000018 /* PomodoroNotificationScheduler.swift in Sources */,
+				A10000000000000000000014 /* StatisticsCalculator.swift in Sources */,
+				A10000000000000000000015 /* StatisticsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -210,6 +240,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000008 /* TodayStackTests.swift in Sources */,
+				A10000000000000000000016 /* PomodoroEngineTests.swift in Sources */,
+				A10000000000000000000017 /* StatisticsCalculatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

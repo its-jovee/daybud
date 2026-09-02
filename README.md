@@ -1,27 +1,31 @@
-# Today Stack
+# Daybud
 
-Today Stack is a native macOS menu-bar app for today’s tasks and recurring habits. It keeps the current day close without adding another full-sized productivity window.
+Daybud is a native macOS menu-bar companion for today’s tasks and recurring habits. It keeps the current day close without adding another full-sized productivity window.
 
 <p align="center">
-  <img src="TodayStack/Resources/TodayStackIcon-Source.png" width="128" alt="Today Stack app icon">
+  <img src="TodayStack/Resources/TodayStackIcon-Source.png" width="128" alt="Daybud app icon">
 </p>
 
 ## Features
 
 - Reorder tasks by dragging the task itself.
+- Automatically carry unfinished tasks into the next day without duplicating them.
 - Link tasks to habits so completing the task fulfills the habit.
 - Switch between active and completed tasks with staggered motion.
 - Check habits from a compact colored tile grid above the task list.
+- Track weekly habits at a glance with progress such as `2/3` and a softened completed state.
 - See the current month as a GitHub-style contribution heatmap.
 - Increase a day’s heat level by completing multiple tasks linked to the same habit.
 - Change habit icons and plan a linked task directly from a habit tile.
+- Start a customizable Pomodoro from any active task, with a native notification and sound when time is up.
+- Review 7-day, 30-day, or all-time task and focus statistics by habit.
 - Keep all data locally in human-readable JSON.
 
 ## Install
 
-Download the latest `Today-Stack.dmg` from [Releases](https://github.com/its-jovee/today-stack/releases/latest), open it, and drag Today Stack into Applications.
+Download the latest `Daybud.dmg` from [Releases](https://github.com/its-jovee/daybud/releases/latest), open it, and drag Daybud into Applications.
 
-Today Stack requires macOS 14 or later. It lives in the menu bar and intentionally has no regular Dock window.
+Daybud requires macOS 14 or later. It lives in the menu bar and intentionally has no regular Dock window.
 
 ## Build from source
 
@@ -33,7 +37,7 @@ xcodebuild -scheme TodayStack -configuration Debug -destination 'platform=macOS'
 
 ## Local data
 
-The app stores its state in `~/.today-stack/state.json`. An optional external plan is read from `~/.today-stack/today.json`; the app never writes that file.
+The app stores its state in `~/.today-stack/state.json`. This legacy location is intentionally preserved so existing Daybud users keep all of their tasks, habits, history, and settings after the rename. An optional external plan is read from `~/.today-stack/today.json`; the app never writes that file.
 
 ## Daily plan import
 

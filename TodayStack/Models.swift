@@ -50,15 +50,43 @@ public enum HabitFrequency: Codable, Hashable, Sendable {
 
 public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
     public let id: String
+    /// Stable identity shared by each daily occurrence of a carried task.
+    /// Pomodoro records use this to keep their relationship to the task even
+    /// when an unfinished occurrence rolls into a new day with a fresh ID.
+    public let lineageID: String
     public var title: String
     public var habitID: String?
     public var isCompleted: Bool
 
-    public init(id: String = UUID().uuidString, title: String, habitID: String? = nil, isCompleted: Bool = false) {
+    public init(
+        id: String = UUID().uuidString,
+        lineageID: String? = nil,
+        title: String,
+        habitID: String? = nil,
+        isCompleted: Bool = false
+    ) {
         self.id = id
+        self.lineageID = lineageID ?? id
         self.title = title
         self.habitID = habitID
         self.isCompleted = isCompleted
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case lineageID
+        case title
+        case habitID
+        case isCompleted
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        lineageID = try container.decodeIfPresent(String.self, forKey: .lineageID) ?? id
+        title = try container.decode(String.self, forKey: .title)
+        habitID = try container.decodeIfPresent(String.self, forKey: .habitID)
+        isCompleted = try container.decode(Bool.self, forKey: .isCompleted)
     }
 }
 
@@ -117,18 +145,53 @@ public struct HabitSession: Codable, Equatable, Identifiable, Hashable, Sendable
 }
 
 public struct AppState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public var schemaVersion: Int
     public var days: [String: DayPlan]
     public var habits: [Habit]
     public var sessions: [HabitSession]
+    public var pomodoro: PomodoroState
 
-    public init(schemaVersion: Int = AppState.currentSchemaVersion, days: [String: DayPlan] = [:], habits: [Habit] = [], sessions: [HabitSession] = []) {
+    public init(
+        schemaVersion: Int = AppState.currentSchemaVersion,
+        days: [String: DayPlan] = [:],
+        habits: [Habit] = [],
+        sessions: [HabitSession] = [],
+        pomodoro: PomodoroState = PomodoroState()
+    ) {
         self.schemaVersion = schemaVersion
         self.days = days
         self.habits = habits
         self.sessions = sessions
+        self.pomodoro = pomodoro
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case days
+        case habits
+        case sessions
+        case pomodoro
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let storedVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard storedVersion == 1 || storedVersion == Self.currentSchemaVersion else {
+            schemaVersion = storedVersion
+            days = [:]
+            habits = []
+            sessions = []
+            pomodoro = PomodoroState()
+            return
+        }
+
+        schemaVersion = Self.currentSchemaVersion
+        days = try container.decodeIfPresent([String: DayPlan].self, forKey: .days) ?? [:]
+        habits = try container.decodeIfPresent([Habit].self, forKey: .habits) ?? []
+        sessions = try container.decodeIfPresent([HabitSession].self, forKey: .sessions) ?? []
+        pomodoro = try container.decodeIfPresent(PomodoroState.self, forKey: .pomodoro) ?? PomodoroState()
     }
 }
 
@@ -145,12 +208,14 @@ public struct ImportedTask: Codable, Equatable, Sendable {
 }
 
 public struct TodayImportFile: Codable, Equatable, Sendable {
+    public static let currentSchemaVersion = 1
+
     public var schemaVersion: Int
     public var date: String
     public var mode: String
     public var tasks: [ImportedTask]
 
-    public init(schemaVersion: Int = 1, date: String, mode: String = "replace", tasks: [ImportedTask] = []) {
+    public init(schemaVersion: Int = TodayImportFile.currentSchemaVersion, date: String, mode: String = "replace", tasks: [ImportedTask] = []) {
         self.schemaVersion = schemaVersion
         self.date = date
         self.mode = mode

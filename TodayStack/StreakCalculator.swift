@@ -8,6 +8,14 @@ public struct WeeklyProgress: Equatable, Sendable {
         self.activeDays = activeDays
         self.targetDays = targetDays
     }
+
+    public var isComplete: Bool {
+        activeDays >= targetDays
+    }
+
+    public var displayedActiveDays: Int {
+        min(activeDays, targetDays)
+    }
 }
 
 public enum StreakCalculator {

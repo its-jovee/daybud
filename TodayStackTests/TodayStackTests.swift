@@ -48,6 +48,35 @@ final class TodayStackTests: XCTestCase {
         XCTAssertEqual(try repository.load(), state)
     }
 
+    func testVersionOneStateMigratesWithoutLosingTaskIdentity() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacy = Data(#"""
+        {
+          "schemaVersion": 1,
+          "days": {
+            "2026-08-27": {
+              "date": "2026-08-27",
+              "tasks": [{"id":"legacy-task","title":"Keep me","habitID":null,"isCompleted":false}]
+            }
+          },
+          "habits": [],
+          "sessions": []
+        }
+        """#.utf8)
+        try legacy.write(to: repository.stateURL)
+
+        let migrated = try repository.load()
+
+        XCTAssertEqual(migrated.schemaVersion, AppState.currentSchemaVersion)
+        XCTAssertEqual(migrated.days["2026-08-27"]?.tasks.first?.lineageID, "legacy-task")
+        XCTAssertEqual(migrated.pomodoro, PomodoroState())
+        let persistedObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: repository.stateURL)) as? [String: Any]
+        )
+        XCTAssertEqual(persistedObject["schemaVersion"] as? Int, AppState.currentSchemaVersion)
+    }
+
     func testMalformedStatePreservesOriginalFile() throws {
         let (repository, directory) = try repository()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -85,8 +114,136 @@ final class TodayStackTests: XCTestCase {
         now = date("2026-08-28")
         store.refresh()
         XCTAssertEqual(store.todayDateKey, "2026-08-28")
-        XCTAssertTrue(store.todayPlan.tasks.isEmpty)
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Third", "Second"])
+        XCTAssertTrue(store.todayPlan.tasks.allSatisfy { !$0.isCompleted })
+        XCTAssertTrue(Set(store.todayPlan.tasks.map(\.id)).isDisjoint(with: [first, second, third]))
+        XCTAssertEqual(
+            store.todayPlan.tasks.map(\.lineageID),
+            [third, second],
+            "A carried occurrence keeps the original task lineage"
+        )
         XCTAssertEqual(store.state.days["2026-08-27"]?.tasks.count, 3)
+    }
+
+    @MainActor
+    func testPomodoroCompletionArchivesFocusAndCompletesTheTask() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-27")
+        let notifications = FocusNotificationSchedulerSpy()
+        let store = AppStore(
+            repository: repository,
+            calendar: calendar,
+            now: { now },
+            focusNotificationScheduler: notifications
+        )
+        let taskID = try XCTUnwrap(store.addTask(title: "Write proposal"))
+        let task = try XCTUnwrap(store.todayPlan.tasks.first)
+        store.updatePomodoroSettings(PomodoroSettings(focusDurationSeconds: 60, extensionDurationSeconds: 30))
+
+        XCTAssertTrue(store.startFocus(on: task))
+        XCTAssertFalse(store.startFocus(on: task))
+        XCTAssertTrue(store.menuBarLabel.hasPrefix("01:00 ·"))
+
+        now = now.addingTimeInterval(60)
+        store.refresh()
+        guard case .awaitingDecision(_, let focusedSeconds, _) = store.focusPresentation else {
+            return XCTFail("Expected the completion decision")
+        }
+        XCTAssertEqual(focusedSeconds, 60)
+
+        store.markFocusedTaskDone()
+        XCTAssertTrue(store.todayPlan.tasks.first(where: { $0.id == taskID })?.isCompleted == true)
+        XCTAssertEqual(store.state.pomodoro.records.count, 1)
+        XCTAssertEqual(store.state.pomodoro.records.first?.focusedSeconds, 60)
+        XCTAssertEqual(store.state.pomodoro.records.first?.outcome, .completedTask)
+        XCTAssertEqual(store.focusPresentation, .idle)
+
+        let reopened = AppStore(repository: repository, calendar: calendar, now: { now })
+        XCTAssertEqual(reopened.state.pomodoro.records, store.state.pomodoro.records)
+    }
+
+    @MainActor
+    func testPomodoroNotificationTracksStartPauseResumeCompletionAndExtension() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-27")
+        let notifications = FocusNotificationSchedulerSpy()
+        let store = AppStore(
+            repository: repository,
+            calendar: calendar,
+            now: { now },
+            focusNotificationScheduler: notifications
+        )
+        notifications.reset()
+
+        _ = store.addTask(title: "Finish the proposal")
+        let task = try XCTUnwrap(store.todayPlan.tasks.first)
+        store.updatePomodoroSettings(
+            PomodoroSettings(focusDurationSeconds: 60, extensionDurationSeconds: 30)
+        )
+
+        XCTAssertTrue(store.startFocus(on: task))
+        XCTAssertEqual(notifications.scheduled.count, 1)
+        XCTAssertEqual(notifications.scheduled.last?.task.titleSnapshot, "Finish the proposal")
+        XCTAssertEqual(notifications.scheduled.last?.deadline, now.addingTimeInterval(60))
+
+        now = now.addingTimeInterval(20)
+        store.pauseFocus()
+        XCTAssertEqual(notifications.cancelCount, 1)
+
+        now = now.addingTimeInterval(100)
+        store.resumeFocus()
+        XCTAssertEqual(notifications.scheduled.count, 2)
+        XCTAssertEqual(notifications.scheduled.last?.deadline, now.addingTimeInterval(40))
+
+        now = now.addingTimeInterval(40)
+        store.refresh()
+        XCTAssertEqual(notifications.cancelCount, 2)
+        XCTAssertEqual(notifications.fallbackSoundCount, 1)
+
+        store.addMoreFocusTime()
+        XCTAssertEqual(notifications.scheduled.count, 3)
+        XCTAssertEqual(notifications.scheduled.last?.deadline, now.addingTimeInterval(30))
+
+        store.stopFocus()
+        XCTAssertEqual(notifications.cancelCount, 3)
+    }
+
+    @MainActor
+    func testRolloverPreservesHabitLinksAndDoesNotDuplicateOrResurrectTasks() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-27")
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let habitID = try XCTUnwrap(store.addHabit(name: "Programming"))
+        let linkedTaskID = try XCTUnwrap(store.addTask(title: "Build feature", habitID: habitID))
+        let generalTaskID = try XCTUnwrap(store.addTask(title: "Send invoice"))
+
+        now = date("2026-08-29")
+        store.refresh()
+
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Build feature", "Send invoice"])
+        XCTAssertEqual(store.todayPlan.tasks.map(\.habitID), [habitID, nil])
+        XCTAssertTrue(store.todayPlan.tasks.allSatisfy { !$0.isCompleted })
+        XCTAssertTrue(Set(store.todayPlan.tasks.map(\.id)).isDisjoint(with: [linkedTaskID, generalTaskID]))
+
+        let carriedIDs = store.todayPlan.tasks.map(\.id)
+        store.refresh()
+        XCTAssertEqual(store.todayPlan.tasks.map(\.id), carriedIDs)
+
+        let reopenedStore = AppStore(repository: repository, calendar: calendar, now: { now })
+        XCTAssertEqual(reopenedStore.todayPlan.tasks.map(\.id), carriedIDs)
+
+        for taskID in carriedIDs {
+            reopenedStore.setTaskCompleted(id: taskID, completed: true)
+        }
+        now = date("2026-08-30")
+        reopenedStore.refresh()
+
+        XCTAssertTrue(reopenedStore.todayPlan.tasks.isEmpty)
+        XCTAssertEqual(reopenedStore.state.days["2026-08-29"]?.tasks.count, 2)
+        XCTAssertEqual(reopenedStore.state.days["2026-08-27"]?.tasks.count, 2)
     }
 
     @MainActor
@@ -123,22 +280,28 @@ final class TodayStackTests: XCTestCase {
     }
 
     @MainActor
-    func testLoggedHabitsCountTowardOverallProgress() throws {
+    func testTaskProgressExcludesHabitCompletions() throws {
         let (repository, directory) = try repository()
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = AppStore(repository: repository, calendar: calendar, now: { self.date("2026-08-27") })
         let habitID = try XCTUnwrap(store.addHabit(name: "Gym"))
+
+        XCTAssertEqual(store.progressText, "0/0")
+        XCTAssertEqual(store.menuBarLabel, "0/0 · Plan today")
+
         let taskID = try XCTUnwrap(store.addTask(title: "General task"))
 
-        XCTAssertEqual(store.progressText, "0/2")
-        XCTAssertEqual(store.menuBarLabel, "0/2 · General task")
+        XCTAssertEqual(store.progressText, "0/1")
+        XCTAssertEqual(store.menuBarLabel, "0/1 · General task")
 
         store.toggleManualHabitToday(id: habitID)
-        XCTAssertEqual(store.progressText, "1/2")
+        XCTAssertEqual(store.completedHabitCount, 1)
+        XCTAssertEqual(store.progressText, "0/1")
+        XCTAssertEqual(store.menuBarLabel, "0/1 · General task")
 
         store.setTaskCompleted(id: taskID, completed: true)
-        XCTAssertEqual(store.progressText, "2/2")
-        XCTAssertEqual(store.menuBarLabel, "2/2 · Done")
+        XCTAssertEqual(store.progressText, "1/1")
+        XCTAssertEqual(store.menuBarLabel, "1/1 · Done")
     }
 
     @MainActor
@@ -222,8 +385,80 @@ final class TodayStackTests: XCTestCase {
         ]
         let progress = StreakCalculator.weeklyProgress(for: habit, sessions: sessions, today: date("2026-08-27"), calendar: calendar)
         XCTAssertEqual(progress, WeeklyProgress(activeDays: 2, targetDays: 2))
+        XCTAssertEqual(progress?.displayedActiveDays, 2)
+        XCTAssertEqual(progress?.isComplete, true)
         XCTAssertEqual(StreakCalculator.currentStreak(for: habit, sessions: sessions, today: date("2026-08-27"), calendar: calendar), 3)
         XCTAssertEqual(StreakCalculator.longestStreak(for: habit, sessions: sessions, calendar: calendar), 3)
         XCTAssertEqual(sessions.count, 7, "Duplicate sessions count toward lifetime sessions")
+    }
+
+    func testWeeklyProgressCapsItsDisplayAfterTheGoalIsExceeded() {
+        let habit = Habit(id: "weekly", slug: "weekly", name: "Weekly", frequency: .weeklyTarget(3))
+        let sessions = [
+            HabitSession(habitID: habit.id, date: "2026-08-24"),
+            HabitSession(habitID: habit.id, date: "2026-08-25"),
+            HabitSession(habitID: habit.id, date: "2026-08-26"),
+            HabitSession(habitID: habit.id, date: "2026-08-27")
+        ]
+
+        let progress = StreakCalculator.weeklyProgress(for: habit, sessions: sessions, today: date("2026-08-27"), calendar: calendar)
+
+        XCTAssertEqual(progress?.activeDays, 4)
+        XCTAssertEqual(progress?.displayedActiveDays, 3)
+        XCTAssertEqual(progress?.isComplete, true)
+
+        let nextWeek = StreakCalculator.weeklyProgress(for: habit, sessions: sessions, today: date("2026-08-31"), calendar: calendar)
+        XCTAssertEqual(nextWeek, WeeklyProgress(activeDays: 0, targetDays: 3))
+        XCTAssertEqual(nextWeek?.isComplete, false)
+    }
+
+    @MainActor
+    func testWeeklyGoalReturnsToInProgressWhenTheFinalManualDayIsUndone() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-24")
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let habitID = try XCTUnwrap(store.addHabit(name: "Gym", frequency: .weeklyTarget(2)))
+        let habit = try XCTUnwrap(store.state.habits.first)
+
+        store.toggleManualHabitToday(id: habitID)
+        now = date("2026-08-25")
+        store.refresh()
+        store.toggleManualHabitToday(id: habitID)
+        XCTAssertEqual(store.weeklyProgress(for: habit)?.isComplete, true)
+
+        store.toggleManualHabitToday(id: habitID)
+        XCTAssertEqual(store.weeklyProgress(for: habit), WeeklyProgress(activeDays: 1, targetDays: 2))
+        XCTAssertEqual(store.weeklyProgress(for: habit)?.isComplete, false)
+    }
+}
+
+@MainActor
+private final class FocusNotificationSchedulerSpy: FocusNotificationScheduling {
+    struct ScheduledCompletion {
+        let task: FocusTaskReference
+        let deadline: Date
+    }
+
+    private(set) var scheduled: [ScheduledCompletion] = []
+    private(set) var cancelCount = 0
+    private(set) var fallbackSoundCount = 0
+
+    func scheduleCompletion(for task: FocusTaskReference, deadline: Date) {
+        scheduled.append(ScheduledCompletion(task: task, deadline: deadline))
+    }
+
+    func cancelCompletion() {
+        cancelCount += 1
+    }
+
+    func playFallbackSoundIfNeeded() {
+        fallbackSoundCount += 1
+    }
+
+    func reset() {
+        scheduled = []
+        cancelCount = 0
+        fallbackSoundCount = 0
     }
 }

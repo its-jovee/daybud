@@ -4,6 +4,7 @@ import SwiftUI
 private enum StackTab: String, CaseIterable, Identifiable {
     case active
     case done
+    case stats
 
     var id: String { rawValue }
 }
@@ -99,9 +100,19 @@ private enum ActivePanel {
     case addTask
     case addTaskForHabit(Habit)
     case editTask(TaskItem)
+    case pomodoroSettings
     case addHabit
     case editHabit(Habit)
     case deleteHabit(Habit)
+
+    var belongsToTodaySection: Bool {
+        switch self {
+        case .addTask, .addTaskForHabit, .editTask, .pomodoroSettings:
+            return true
+        case .addHabit, .editHabit, .deleteHabit:
+            return false
+        }
+    }
 }
 
 struct MenuBarRootView: View {
@@ -110,12 +121,14 @@ struct MenuBarRootView: View {
     @State private var selectedTab: StackTab = .active
     @State private var showingCelebration = false
     @State private var celebrationID = 0
+    @State private var statisticsPeriod: StatisticsPeriod = .sevenDays
+    @State private var statisticsMetric: StatisticsMetric = .tasks
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
-                    Label("Today Stack", systemImage: "checklist")
+                    Label("Daybud", systemImage: "checklist")
                         .font(.headline)
                     Spacer()
                     Text(store.progressText)
@@ -125,18 +138,19 @@ struct MenuBarRootView: View {
                 }
 
                 ProgressView(
-                    value: Double(store.completedTodayCount),
-                    total: Double(max(store.totalTodayCount, 1))
+                    value: Double(store.completedTaskCount),
+                    total: Double(max(store.totalTaskCount, 1))
                 )
                 .progressViewStyle(.linear)
                 .controlSize(.small)
-                .accessibilityLabel("Overall progress")
+                .accessibilityLabel("Task progress")
                 .accessibilityValue(store.progressText)
-                .animation(.easeInOut(duration: 0.3), value: store.completedTodayCount)
+                .animation(.easeInOut(duration: 0.3), value: store.completedTaskCount)
 
                 Picker("Items", selection: tabSelection) {
                     Text("Active \(activeCount)").tag(StackTab.active)
                     Text("Done \(store.completedTaskCount)").tag(StackTab.done)
+                    Label("Stats", systemImage: "chart.bar.xaxis").tag(StackTab.stats)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -146,46 +160,64 @@ struct MenuBarRootView: View {
             .padding(.top, 14)
             .padding(.bottom, 10)
 
-            if let activePanel {
-                inlinePanel(activePanel)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            if selectedTab == .stats {
+                StatisticsView(
+                    snapshot: store.statisticsSnapshot(period: statisticsPeriod),
+                    period: $statisticsPeriod,
+                    metric: $statisticsMetric,
+                    onClose: { switchTab(to: .active) }
+                )
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                if let activePanel, !activePanel.belongsToTodaySection {
+                    inlinePanel(activePanel)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    Divider()
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                }
+
+                HabitsSectionView(
+                    store: store,
+                    onAdd: {
+                        selectedTab = .active
+                        showPanel(.addHabit)
+                    },
+                    onPlanTask: { habit in
+                        selectedTab = .active
+                        showPanel(.addTaskForHabit(habit))
+                    },
+                    onEdit: { showPanel(.editHabit($0)) },
+                    onDelete: { showPanel(.deleteHabit($0)) }
+                )
+
                 Divider()
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-            }
 
-            HabitsSectionView(
-                store: store,
-                onAdd: {
-                    selectedTab = .active
-                    showPanel(.addHabit)
-                },
-                onPlanTask: { habit in
-                    selectedTab = .active
-                    showPanel(.addTaskForHabit(habit))
-                },
-                onEdit: { showPanel(.editHabit($0)) },
-                onDelete: { showPanel(.deleteHabit($0)) }
-            )
-
-            Divider()
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-
-            TodaySectionView(
-                store: store,
-                selectedTab: selectedTab,
-                onAdd: {
-                    selectedTab = .active
-                    showPanel(.addTask)
-                },
-                onEdit: { showPanel(.editTask($0)) },
-                onDelete: { id in
-                    withAnimation(.snappy(duration: 0.24)) {
-                        store.deleteTask(id: id)
+                TodaySectionView(
+                    store: store,
+                    selectedTab: selectedTab,
+                    onAdd: {
+                        selectedTab = .active
+                        showPanel(.addTask)
+                    },
+                    onFocusSettings: { showPanel(.pomodoroSettings) },
+                    onEdit: { showPanel(.editTask($0)) },
+                    onDelete: { id in
+                        withAnimation(.snappy(duration: 0.24)) {
+                            store.deleteTask(id: id)
+                        }
+                    }
+                ) {
+                    Group {
+                        if let activePanel, activePanel.belongsToTodaySection {
+                            inlinePanel(activePanel)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
                     }
                 }
-            )
+            }
 
             if let error = store.errorMessage {
                 HStack(alignment: .top, spacing: 6) {
@@ -252,6 +284,15 @@ struct MenuBarRootView: View {
                 closePanel()
             }
             .id("edit-task-\(task.id)")
+        case .pomodoroSettings:
+            PomodoroSettingsView(
+                settings: store.state.pomodoro.settings,
+                onCancel: closePanel
+            ) { settings in
+                store.updatePomodoroSettings(settings)
+                closePanel()
+            }
+            .id("pomodoro-settings")
         case .addHabit:
             HabitEditorView(habit: nil, onCancel: closePanel) { name, frequency, iconName in
                 store.addHabit(name: name, frequency: frequency, iconName: iconName)
@@ -301,6 +342,7 @@ struct MenuBarRootView: View {
     private func switchTab(to tab: StackTab) {
         guard tab != selectedTab else { return }
         withAnimation(.spring(response: 0.58, dampingFraction: 0.86, blendDuration: 0.18)) {
+            activePanel = nil
             selectedTab = tab
         }
     }
@@ -380,7 +422,7 @@ private struct ConfettiBurstView: View {
     }
 }
 
-private struct TodaySectionView: View {
+private struct TodaySectionView<InlineEditor: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var store: AppStore
     @State private var draggedTaskID: String?
@@ -390,8 +432,10 @@ private struct TodaySectionView: View {
     @State private var completingTaskIDs: Set<String> = []
     let selectedTab: StackTab
     let onAdd: () -> Void
+    let onFocusSettings: () -> Void
     let onEdit: (TaskItem) -> Void
     let onDelete: (String) -> Void
+    let inlineEditor: () -> InlineEditor
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -399,6 +443,14 @@ private struct TodaySectionView: View {
                 Label("Today", systemImage: "sun.max")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
+                Button(action: onFocusSettings) {
+                    Image(systemName: "timer")
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+                .imageScale(.medium)
+                .help("Pomodoro settings")
+                .accessibilityLabel("Pomodoro settings")
                 Button(action: onAdd) {
                     Image(systemName: "plus.circle.fill")
                         .symbolRenderingMode(.hierarchical)
@@ -408,6 +460,21 @@ private struct TodaySectionView: View {
                 .accessibilityLabel("Add task")
             }
             .padding(.horizontal, 14)
+
+            inlineEditor()
+
+            FocusTimerCard(
+                presentation: store.focusPresentation,
+                settings: store.state.pomodoro.settings,
+                canMarkDone: store.canMarkFocusedTaskDone,
+                onPause: store.pauseFocus,
+                onResume: store.resumeFocus,
+                onStop: store.stopFocus,
+                onMoreTime: store.addMoreFocusTime,
+                onMarkDone: store.markFocusedTaskDone,
+                onOpenSettings: onFocusSettings
+            )
+            .transition(.move(edge: .top).combined(with: .opacity))
 
             if selectedTab == .active && visibleTasks.count > 1 {
                 Label("Click and hold a task, then drag to reorder", systemImage: "arrow.up.arrow.down")
@@ -437,6 +504,9 @@ private struct TodaySectionView: View {
                                     store.setTaskHabit(id: task.id, habitID: habitID)
                                 }
                             },
+                            isFocused: isFocused(task),
+                            canStartFocus: !store.hasActiveFocusTimer && !completingTaskIDs.contains(task.id),
+                            onStartFocus: { store.startFocus(on: task) },
                             onEdit: { onEdit(task) },
                             onDelete: { onDelete(task.id) }
                         )
@@ -483,12 +553,28 @@ private struct TodaySectionView: View {
         }
     }
 
+    private func isFocused(_ task: TaskItem) -> Bool {
+        let reference: FocusTaskReference?
+        switch store.focusPresentation {
+        case .idle:
+            reference = nil
+        case .running(let task, _, _, _, _),
+             .paused(let task, _, _, _, _),
+             .awaitingDecision(let task, _, _):
+            reference = task
+        }
+        guard let reference else { return false }
+        return task.id == reference.occurrenceID || task.lineageID == reference.lineageID
+    }
+
     private var emptyMessage: String {
         switch selectedTab {
         case .active:
             return store.todayPlan.tasks.isEmpty ? "Nothing planned yet" : "All tasks are done"
         case .done:
             return "Completed tasks land here"
+        case .stats:
+            return ""
         }
     }
 
@@ -615,6 +701,9 @@ private struct TaskRowView: View {
     let habits: [Habit]
     let onToggle: (Bool) -> Void
     let onAssignHabit: (String?) -> Void
+    let isFocused: Bool
+    let canStartFocus: Bool
+    let onStartFocus: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
 
@@ -664,6 +753,18 @@ private struct TaskRowView: View {
             }
 
             Spacer(minLength: 0)
+
+            if !task.isCompleted {
+                Button(action: onStartFocus) {
+                    Image(systemName: isFocused ? "timer.circle.fill" : "play.circle")
+                        .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canStartFocus)
+                .help(isFocused ? "Pomodoro in progress" : "Start Pomodoro for \(task.title)")
+                .accessibilityLabel(isFocused ? "Pomodoro in progress for \(task.title)" : "Start Pomodoro for \(task.title)")
+            }
 
             Menu {
                 if !habits.isEmpty || task.habitID != nil {
@@ -749,7 +850,14 @@ private struct HabitsSectionView: View {
     let onEdit: (Habit) -> Void
     let onDelete: (Habit) -> Void
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 7), count: 4)
+    private let activityColumnCount = 5
+
+    private var columns: [GridItem] {
+        Array(
+            repeating: GridItem(.fixed(70), spacing: 0, alignment: .center),
+            count: activityColumnCount
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -780,7 +888,7 @@ private struct HabitsSectionView: View {
                     .padding(.horizontal, 14)
                     .padding(.bottom, 10)
             } else {
-                LazyVGrid(columns: columns, spacing: 7) {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 0) {
                     ForEach(Array(store.state.habits.enumerated()), id: \.element.id) { index, habit in
                         HabitActivityTile(
                         habit: habit,
@@ -788,6 +896,7 @@ private struct HabitsSectionView: View {
                         isLoggedToday: store.isLoggedToday(habit: habit),
                         hasManualLogToday: store.hasManualLogToday(habit: habit),
                         completionTaskTitle: store.completionTaskTitle(for: habit),
+                        weeklyProgress: store.weeklyProgress(for: habit),
                         isCompleting: completingHabitIDs.contains(habit.id),
                         activityCounts: store.activityCounts(for: habit),
                         calendar: store.calendar,
@@ -811,6 +920,7 @@ private struct HabitsSectionView: View {
                     }
                 }
                 .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .animation(.snappy(duration: 0.24), value: store.state.sessions)
@@ -851,11 +961,15 @@ private struct HabitsSectionView: View {
 }
 
 private struct HabitActivityTile: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
     let habit: Habit
     let tint: Color
     let isLoggedToday: Bool
     let hasManualLogToday: Bool
     let completionTaskTitle: String?
+    let weeklyProgress: WeeklyProgress?
     let isCompleting: Bool
     let activityCounts: [String: Int]
     let calendar: Calendar
@@ -867,104 +981,166 @@ private struct HabitActivityTile: View {
     let onDelete: () -> Void
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(isLoggedToday ? tint.opacity(tileFillOpacity) : Color.primary.opacity(0.045))
+        ZStack {
+            HabitMiniMonthGrid(
+                tint: tint,
+                activityCounts: activityCounts,
+                calendar: calendar,
+                todayDateKey: todayDateKey
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .blur(radius: isRevealed ? 2.4 : 0)
+            .opacity(isRevealed ? 0.14 : restingGridOpacity)
+            .shadow(
+                color: isLoggedToday ? tint.opacity(0.3) : .clear,
+                radius: isCompleting ? 7 : 4
+            )
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.11), value: isRevealed)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 5) {
-                    Menu {
-                        ForEach(HabitIconCatalog.symbols, id: \.self) { symbol in
-                            Button {
-                                onChangeIcon(symbol)
-                            } label: {
-                                HStack {
-                                    Label(HabitIconCatalog.displayName(for: symbol), systemImage: symbol)
-                                    if currentIconName == symbol { Image(systemName: "checkmark") }
-                                }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: currentIconName)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(isLoggedToday ? Color.white : tint)
-                            .frame(width: 23, height: 23)
-                            .background(isLoggedToday ? tint : tint.opacity(0.14), in: Circle())
-                            .contentTransition(.symbolEffect(.replace))
-                            .symbolEffect(.bounce, value: isCompleting)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .help("Change \(habit.name) icon")
-                    .accessibilityLabel("Change \(habit.name) icon")
-
-                    Spacer(minLength: 0)
-
-                    Menu {
-                        Button("Plan a task for today", systemImage: "plus.square.on.square", action: onPlanTask)
-                        Divider()
-                        Button("Edit habit", action: onEdit)
-                        Button("Delete habit", role: .destructive, action: onDelete)
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 18, height: 18)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .accessibilityLabel("More actions for \(habit.name)")
-                }
-
-                Text(habit.name)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(isLoggedToday ? Color.primary : Color.primary.opacity(0.86))
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-
-                HabitMiniMonthGrid(
-                    tint: tint,
-                    activityCounts: activityCounts,
-                    calendar: calendar,
-                    todayDateKey: todayDateKey
+            hoverDetails
+                .opacity(isRevealed ? 1 : 0)
+                .offset(y: isRevealed ? 0 : -5)
+                .allowsHitTesting(isRevealed)
+                .animation(
+                    reduceMotion
+                        ? nil
+                        : .easeOut(duration: 0.18).delay(isRevealed ? 0.035 : 0),
+                    value: isRevealed
                 )
-            }
-            .padding(7)
-
-            if isLoggedToday {
-                completionBadge
-                    .foregroundStyle(.white)
-                    .frame(width: 15, height: 15)
-                    .background(tint, in: Circle())
-                    .padding(6)
-                    .allowsHitTesting(false)
+        }
+        .frame(width: 70, height: 60)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: toggleIfAllowed)
+        .scaleEffect(isCompleting ? 1.025 : 1)
+        .onHover { hovered in
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.14)) {
+                isHovered = hovered
             }
         }
-        .frame(height: 86)
-        .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .onTapGesture {
-            guard !isLoggedToday || hasManualLogToday else { return }
-            onToggle()
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(isLoggedToday ? tint.opacity(0.62) : Color.primary.opacity(0.055), lineWidth: 1)
-                .allowsHitTesting(false)
-        }
-        .scaleEffect(isCompleting ? 1.045 : 1)
         .animation(.spring(response: 0.32, dampingFraction: 0.68), value: isCompleting)
         .animation(.snappy(duration: 0.26), value: isLoggedToday)
+        .animation(.snappy(duration: 0.26), value: weeklyProgress?.isComplete)
+        .zIndex(isRevealed ? 10 : 0)
         .help(helpText)
-        .accessibilityElement(children: .contain)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
+        .accessibilityHint(helpText)
+        .accessibilityAction(named: isLoggedToday && hasManualLogToday ? "Undo today" : "Complete today") {
+            toggleIfAllowed()
+        }
+        .accessibilityAction(named: "Plan a task for today", onPlanTask)
+        .accessibilityAction(named: "Edit habit", onEdit)
+    }
+
+    private var isRevealed: Bool {
+        isHovered
     }
 
     private var currentIconName: String {
         habit.iconName ?? HabitIconCatalog.suggestedSymbol(for: habit.name)
     }
 
+    private var hoverDetails: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 3) {
+                iconMenu
+                Spacer(minLength: 0)
+                actionsMenu
+            }
+
+            Spacer(minLength: 1)
+
+            Text(habit.name)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            Text(hoverStatusText)
+                .font(.system(size: 8, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundStyle(hoverStatusColor)
+                .lineLimit(1)
+        }
+        .padding(6)
+        .frame(width: 70, height: 60, alignment: .topLeading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.16), radius: 9, y: 3)
+    }
+
+    private var iconMenu: some View {
+        Menu {
+            ForEach(HabitIconCatalog.symbols, id: \.self) { symbol in
+                Button {
+                    onChangeIcon(symbol)
+                } label: {
+                    HStack {
+                        Label(HabitIconCatalog.displayName(for: symbol), systemImage: symbol)
+                        if currentIconName == symbol { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: currentIconName)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(isLoggedToday ? Color.white : tint)
+                .frame(width: 17, height: 17)
+                .background(isLoggedToday ? tint : tint.opacity(0.14), in: Circle())
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, value: isCompleting)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("Change \(habit.name) icon")
+        .accessibilityLabel("Change \(habit.name) icon")
+    }
+
+    private var actionsMenu: some View {
+        Menu {
+            Button("Plan a task for today", systemImage: "plus.square.on.square", action: onPlanTask)
+            Divider()
+            Button("Edit habit", action: onEdit)
+            Button("Delete habit", role: .destructive, action: onDelete)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .accessibilityLabel("More actions for \(habit.name)")
+    }
+
+    private var hoverStatusText: String {
+        if let weeklyProgress {
+            return weeklyProgress.isComplete
+                ? "Complete · \(weeklyProgress.displayedActiveDays)/\(weeklyProgress.targetDays)"
+                : "\(weeklyProgress.displayedActiveDays)/\(weeklyProgress.targetDays) this week"
+        }
+        return isLoggedToday ? "Daily · Done" : "Daily · Open"
+    }
+
+    private var hoverStatusColor: Color {
+        if weeklyProgress?.isComplete == true || isLoggedToday { return tint }
+        return .secondary
+    }
+
+    private func toggleIfAllowed() {
+        guard !isLoggedToday || hasManualLogToday else { return }
+        onToggle()
+    }
+
     private var helpText: String {
+        if let weeklyProgress {
+            let progress = "\(weeklyProgress.displayedActiveDays) of \(weeklyProgress.targetDays) days this week"
+            if weeklyProgress.isComplete { return "Weekly goal complete: \(progress)" }
+            if let completionTaskTitle { return "\(progress). Completed today via \(completionTaskTitle)" }
+            if hasManualLogToday { return "\(progress). Click to undo today" }
+            return "\(progress). Click to complete \(habit.name) today"
+        }
         if let completionTaskTitle { return "Completed via \(completionTaskTitle)" }
         if hasManualLogToday { return "Click to undo today" }
         return "Click to complete \(habit.name) today"
@@ -974,27 +1150,16 @@ private struct HabitActivityTile: View {
         activityCounts[todayDateKey, default: 0]
     }
 
-    private var tileFillOpacity: Double {
-        switch todayActivityCount {
-        case 4...: 0.28
-        case 3: 0.24
-        case 2: 0.21
-        default: 0.17
-        }
-    }
-
-    @ViewBuilder
-    private var completionBadge: some View {
-        if todayActivityCount > 1 {
-            Text(todayActivityCount > 9 ? "9+" : "\(todayActivityCount)")
-                .font(.system(size: todayActivityCount > 9 ? 6 : 8, weight: .bold, design: .rounded))
-        } else {
-            Image(systemName: completionTaskTitle == nil ? "checkmark" : "checkmark.link")
-                .font(.system(size: 8, weight: .bold))
-        }
+    private var restingGridOpacity: Double {
+        if weeklyProgress?.isComplete == true { return 0.62 }
+        return 1
     }
 
     private var accessibilitySummary: String {
+        if let weeklyProgress {
+            let status = weeklyProgress.isComplete ? "weekly goal complete" : "weekly goal in progress"
+            return "\(habit.name), \(status), \(weeklyProgress.displayedActiveDays) of \(weeklyProgress.targetDays) days"
+        }
         guard todayActivityCount > 0 else { return "\(habit.name), not completed today" }
         let noun = todayActivityCount == 1 ? "contribution" : "contributions"
         return "\(habit.name), \(todayActivityCount) \(noun) today"
@@ -1007,23 +1172,28 @@ private struct HabitMiniMonthGrid: View {
     let calendar: Calendar
     let todayDateKey: String
 
-    private let columns = Array(repeating: GridItem(.fixed(4), spacing: 1.5), count: 7)
+    private let cellSize: CGFloat = 7
+    private let cellSpacing: CGFloat = 2
+
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.fixed(cellSize), spacing: cellSpacing), count: 7)
+    }
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 1.5) {
+        LazyVGrid(columns: columns, spacing: cellSpacing) {
             ForEach(Array(monthCells.enumerated()), id: \.offset) { _, cell in
-                RoundedRectangle(cornerRadius: 1.2, style: .continuous)
+                RoundedRectangle(cornerRadius: 1.7, style: .continuous)
                     .fill(fillColor(for: cell))
-                    .frame(width: 4, height: 4)
+                    .frame(width: cellSize, height: cellSize)
                     .overlay {
                         if cell.dateKey == todayDateKey {
-                            RoundedRectangle(cornerRadius: 1.2, style: .continuous)
-                                .stroke(tint.opacity(0.95), lineWidth: 0.8)
+                            RoundedRectangle(cornerRadius: 1.7, style: .continuous)
+                                .stroke(tint.opacity(0.95), lineWidth: 1)
                         }
                     }
             }
         }
-        .frame(width: 37, alignment: .leading)
+        .frame(width: 61, alignment: .leading)
         .accessibilityHidden(true)
     }
 

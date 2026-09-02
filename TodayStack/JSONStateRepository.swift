@@ -7,9 +7,9 @@ public enum JSONRepositoryError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .malformed:
-            return "Today Stack could not read state.json. The original file was preserved."
+            return "Daybud could not read state.json. The original file was preserved."
         case .unsupportedSchema(let version):
-            return "Today Stack does not support state schema version \(version). The original file was preserved."
+            return "Daybud does not support state schema version \(version). The original file was preserved."
         }
     }
 }
@@ -49,9 +49,16 @@ public final class JSONStateRepository: @unchecked Sendable {
 
         do {
             let data = try Data(contentsOf: stateURL)
+            let storedVersion = try decoder.decode(SchemaEnvelope.self, from: data).schemaVersion
+            guard storedVersion == 1 || storedVersion == AppState.currentSchemaVersion else {
+                throw JSONRepositoryError.unsupportedSchema(storedVersion)
+            }
             let state = try decoder.decode(AppState.self, from: data)
             guard state.schemaVersion == AppState.currentSchemaVersion else {
                 throw JSONRepositoryError.unsupportedSchema(state.schemaVersion)
+            }
+            if storedVersion < AppState.currentSchemaVersion {
+                try saveUnlocked(state)
             }
             return state
         } catch let error as JSONRepositoryError {
@@ -71,6 +78,10 @@ public final class JSONStateRepository: @unchecked Sendable {
             throw JSONRepositoryError.unsupportedSchema(state.schemaVersion)
         }
 
+        try saveUnlocked(state)
+    }
+
+    private func saveUnlocked(_ state: AppState) throws {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         let data = try encoder.encode(state)
         let temporaryURL = directoryURL.appendingPathComponent("state.json.\(UUID().uuidString).tmp")
@@ -86,6 +97,10 @@ public final class JSONStateRepository: @unchecked Sendable {
             try? fileManager.removeItem(at: temporaryURL)
             throw error
         }
+    }
+
+    private struct SchemaEnvelope: Decodable {
+        let schemaVersion: Int
     }
 
     public func readTodayFile() throws -> Data? {
