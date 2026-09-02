@@ -24,14 +24,22 @@ Daybud connects the two. Finish **Write 500 words** and your **Write** habit mov
       <img src="docs/media/daybud-complete-task.gif" width="380" alt="Completing a task in Daybud moves it out of Active and updates progress">
     </td>
     <td width="50%" align="center">
-      <img src="docs/media/daybud-start-focus.gif" width="380" alt="Starting a Pomodoro focus session from a task in Daybud">
+      <img src="docs/media/daybud-pomodoro-timer.gif" width="380" alt="A Pomodoro timer counting down on a task in Daybud">
     </td>
   </tr>
   <tr>
     <td align="center"><strong>Finish it once.</strong><br>Daybud moves it to Done and records the linked habit.</td>
-    <td align="center"><strong>Focus without setup.</strong><br>Press play on any task to begin a Pomodoro.</td>
+    <td align="center"><strong>Stay with the task.</strong><br>Run a Pomodoro without leaving your menu bar.</td>
   </tr>
 </table>
+
+### See where the week went
+
+Daybud turns completed tasks into a lightweight picture of your attention. Switch between 7 and 30 days to see which habits are receiving real effort — without starting a separate time-tracking ritual.
+
+<p align="center">
+  <img src="docs/media/daybud-stats.gif" width="500" alt="Opening Daybud Stats and switching from a 7-day to a 30-day task breakdown">
+</p>
 
 ## How it works
 
