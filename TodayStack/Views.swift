@@ -423,7 +423,7 @@ private struct ConfettiBurstView: View {
     }
 }
 
-private enum TaskDragOrigin {
+private enum TaskDragOrigin: String {
     case today
     case later
 }
@@ -432,12 +432,12 @@ private struct TodaySectionView<InlineEditor: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var store: AppStore
     @State private var draggedTaskID: String?
+    @State private var draggedTaskOrigin: TaskDragOrigin?
     @State private var dragTranslation: CGFloat = 0
+    @State private var dragStartTaskFrame: CGRect = .zero
     @State private var dropTargetTaskID: String?
     @State private var taskRowFrames: [String: CGRect] = [:]
     @State private var todayDropFrame: CGRect = .zero
-    @State private var laterDropFrame: CGRect = .zero
-    @State private var draggedTaskOrigin: TaskDragOrigin?
     @State private var isDropOverToday = false
     @State private var isDropOverLater = false
     @State private var isLaterExpanded = false
@@ -498,7 +498,6 @@ private struct TodaySectionView<InlineEditor: View>: View {
         .coordinateSpace(name: "today-task-list")
         .onPreferenceChange(TaskRowFramePreferenceKey.self) { taskRowFrames = $0 }
         .onPreferenceChange(TodayTaskDropFramePreferenceKey.self) { todayDropFrame = $0 }
-        .onPreferenceChange(LaterTaskDropFramePreferenceKey.self) { laterDropFrame = $0 }
     }
 
     private var todayTasksArea: some View {
@@ -520,7 +519,7 @@ private struct TodaySectionView<InlineEditor: View>: View {
             } else {
                 VStack(spacing: 2) {
                     ForEach(Array(visibleTasks.enumerated()), id: \.element.id) { index, task in
-                        TaskRowView(
+                        dragEnabledTodayRow(TaskRowView(
                             task: task,
                             isCurrent: store.currentTask?.id == task.id,
                             isCompleting: completingTaskIDs.contains(task.id),
@@ -541,7 +540,7 @@ private struct TodaySectionView<InlineEditor: View>: View {
                             },
                             onEdit: { onEdit(task) },
                             onDelete: { onDelete(task.id) }
-                        )
+                        ), taskID: task.id)
                         .transition(tabTransition)
                         .animation(staggeredAnimation(for: index), value: selectedTab)
                         .background {
@@ -553,7 +552,7 @@ private struct TodaySectionView<InlineEditor: View>: View {
                             }
                         }
                         .overlay {
-                            if dropTargetTaskID == task.id && !isDropOverLater {
+                            if dropTargetTaskID == task.id {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .stroke(Color.accentColor.opacity(0.75), lineWidth: 1.5)
                                     .allowsHitTesting(false)
@@ -568,7 +567,6 @@ private struct TodaySectionView<InlineEditor: View>: View {
                             y: isDragging(task.id, from: .today) ? 3 : 0
                         )
                         .zIndex(isDragging(task.id, from: .today) ? 2 : 0)
-                        .simultaneousGesture(taskDragGesture(for: task.id, origin: .today))
                     }
                 }
                 .animation(.snappy(duration: 0.24), value: store.todayPlan.tasks)
@@ -672,7 +670,7 @@ private struct TodaySectionView<InlineEditor: View>: View {
                                 y: isDragging(task.id, from: .later) ? 3 : 0
                             )
                             .zIndex(isDragging(task.id, from: .later) ? 2 : 0)
-                            .simultaneousGesture(taskDragGesture(for: task.id, origin: .later))
+                            .highPriorityGesture(taskDragGesture(for: task.id, origin: .later))
                         }
                     }
                     .padding(.horizontal, 1)
@@ -689,14 +687,6 @@ private struct TodaySectionView<InlineEditor: View>: View {
         .overlay {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .stroke(isDropOverLater ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.06), lineWidth: 1)
-        }
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: LaterTaskDropFramePreferenceKey.self,
-                    value: proxy.frame(in: .named("today-task-list"))
-                )
-            }
         }
         .padding(.horizontal, 8)
         .animation(.snappy(duration: 0.2), value: isDropOverLater)
@@ -775,6 +765,16 @@ private struct TodaySectionView<InlineEditor: View>: View {
         }
     }
 
+    @ViewBuilder
+    private func dragEnabledTodayRow<Row: View>(_ row: Row, taskID: String) -> some View {
+        if selectedTab == .active && !completingTaskIDs.contains(taskID) {
+            row
+                .highPriorityGesture(taskDragGesture(for: taskID, origin: .today))
+        } else {
+            row
+        }
+    }
+
     private func taskDragGesture(for taskID: String, origin: TaskDragOrigin) -> some Gesture {
         DragGesture(minimumDistance: 5, coordinateSpace: .named("today-task-list"))
             .onChanged { value in
@@ -782,38 +782,44 @@ private struct TodaySectionView<InlineEditor: View>: View {
                 if draggedTaskID == nil {
                     draggedTaskID = taskID
                     draggedTaskOrigin = origin
+                    dragStartTaskFrame = taskRowFrames[taskID] ?? .zero
                 }
                 guard draggedTaskID == taskID, draggedTaskOrigin == origin else { return }
                 dragTranslation = value.translation.height
 
                 switch origin {
                 case .today:
-                    isDropOverLater = expanded(laterDropFrame).contains(value.location)
+                    isDropOverLater = isInLaterDropBand(value.location, excluding: taskID)
                     isDropOverToday = false
                     dropTargetTaskID = isDropOverLater
                         ? nil
                         : reorderTarget(at: value.location.y, excluding: taskID)
                 case .later:
-                    isDropOverToday = expanded(todayDropFrame).contains(value.location)
+                    isDropOverToday = isInTodayDropArea(value.location)
                     isDropOverLater = false
                     dropTargetTaskID = isDropOverToday
                         ? reorderTarget(at: value.location.y, excluding: taskID)
                         : nil
                 }
             }
-            .onEnded { _ in
+            .onEnded { value in
                 guard draggedTaskID == taskID, draggedTaskOrigin == origin else { return }
-                let targetID = dropTargetTaskID
+                let endedOverLater = origin == .today && isInLaterDropBand(value.location, excluding: taskID)
+                let endedOverToday = origin == .later && isInTodayDropArea(value.location)
+                let targetID = (endedOverLater || !endedOverToday && origin == .later)
+                    ? nil
+                    : reorderTarget(at: value.location.y, excluding: taskID)
+
                 withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
                     switch origin {
                     case .today:
-                        if isDropOverLater {
+                        if endedOverLater {
                             store.moveTaskToLater(id: taskID)
                         } else if let targetID {
                             moveTask(taskID, over: targetID)
                         }
                     case .later:
-                        if isDropOverToday {
+                        if endedOverToday {
                             store.moveLaterTaskToToday(id: taskID, before: targetID)
                         }
                     }
@@ -826,16 +832,38 @@ private struct TodaySectionView<InlineEditor: View>: View {
         draggedTaskID == taskID && draggedTaskOrigin == origin
     }
 
-    private func expanded(_ frame: CGRect) -> CGRect {
-        guard !frame.isEmpty else { return .zero }
-        return frame.insetBy(dx: -6, dy: -8)
+    private func isInLaterDropBand(_ location: CGPoint, excluding sourceID: String) -> Bool {
+        var frames = visibleTasks.compactMap { task in
+            task.id == sourceID ? nil : taskRowFrames[task.id]
+        }
+        if !dragStartTaskFrame.isEmpty { frames.append(dragStartTaskFrame) }
+        guard let first = frames.first else { return false }
+        let taskBounds = frames.dropFirst().reduce(first) { $0.union($1) }
+        let dropBand = CGRect(
+            x: taskBounds.minX - 10,
+            y: taskBounds.maxY + 2,
+            width: taskBounds.width + 20,
+            height: 160
+        )
+        return dropBand.contains(location)
+    }
+
+    private func isInTodayDropArea(_ location: CGPoint) -> Bool {
+        let frames = visibleTasks.compactMap { taskRowFrames[$0.id] }
+        if let first = frames.first {
+            let taskBounds = frames.dropFirst().reduce(first) { $0.union($1) }
+            return taskBounds.insetBy(dx: -10, dy: -24).contains(location)
+        }
+        guard !todayDropFrame.isEmpty else { return false }
+        return todayDropFrame.insetBy(dx: -8, dy: -8).contains(location)
     }
 
     private func resetDragState() {
         draggedTaskID = nil
         draggedTaskOrigin = nil
-        dropTargetTaskID = nil
         dragTranslation = 0
+        dragStartTaskFrame = .zero
+        dropTargetTaskID = nil
         isDropOverToday = false
         isDropOverLater = false
     }
@@ -890,14 +918,6 @@ private struct TaskRowFramePreferenceKey: PreferenceKey {
 }
 
 private struct TodayTaskDropFramePreferenceKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
-    }
-}
-
-private struct LaterTaskDropFramePreferenceKey: PreferenceKey {
     static var defaultValue: CGRect = .zero
 
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
