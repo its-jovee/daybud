@@ -238,6 +238,7 @@ struct MenuBarRootView: View {
             }
         }
         .frame(width: 380)
+        .fixedSize(horizontal: false, vertical: true)
         .overlay(alignment: .top) {
             if showingCelebration {
                 ConfettiBurstView()
