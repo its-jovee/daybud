@@ -77,6 +77,36 @@ final class TodayStackTests: XCTestCase {
         XCTAssertEqual(persistedObject["schemaVersion"] as? Int, AppState.currentSchemaVersion)
     }
 
+    func testVersionTwoStateMigratesWithAnEmptyLaterList() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let versionTwo = Data(#"""
+        {
+          "schemaVersion": 2,
+          "days": {
+            "2026-08-27": {
+              "date": "2026-08-27",
+              "tasks": [{"id":"existing","lineageID":"existing","title":"Keep me","habitID":null,"isCompleted":false}]
+            }
+          },
+          "habits": [],
+          "sessions": [],
+          "pomodoro": {
+            "settings": {"focusDurationSeconds":1500,"extensionDurationSeconds":1500},
+            "activeTimer": null,
+            "records": []
+          }
+        }
+        """#.utf8)
+        try versionTwo.write(to: repository.stateURL)
+
+        let migrated = try repository.load()
+
+        XCTAssertEqual(migrated.schemaVersion, AppState.currentSchemaVersion)
+        XCTAssertTrue(migrated.laterTasks.isEmpty)
+        XCTAssertEqual(migrated.days["2026-08-27"]?.tasks.first?.title, "Keep me")
+    }
+
     func testMalformedStatePreservesOriginalFile() throws {
         let (repository, directory) = try repository()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -247,6 +277,63 @@ final class TodayStackTests: XCTestCase {
     }
 
     @MainActor
+    func testLaterRemovesTasksFromTodayPersistsAndSurvivesRollover() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-27")
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let habitID = try XCTUnwrap(store.addHabit(name: "Study"))
+        let parkedID = try XCTUnwrap(store.addTask(title: "Read chapter", habitID: habitID))
+        _ = store.addTask(title: "Send update")
+
+        store.moveTaskToLater(id: parkedID)
+
+        XCTAssertEqual(store.progressText, "0/1")
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Send update"])
+        XCTAssertEqual(store.state.laterTasks.map(\.title), ["Read chapter"])
+        XCTAssertEqual(store.state.laterTasks.first?.habitID, habitID)
+
+        let reopened = AppStore(repository: repository, calendar: calendar, now: { now })
+        XCTAssertEqual(reopened.state.laterTasks.map(\.id), [parkedID])
+
+        now = date("2026-08-28")
+        reopened.refresh()
+        let carriedTask = try XCTUnwrap(reopened.todayPlan.tasks.first)
+        XCTAssertEqual(carriedTask.title, "Send update")
+        XCTAssertEqual(reopened.state.laterTasks.map(\.title), ["Read chapter"])
+
+        reopened.moveLaterTaskToToday(id: parkedID, before: carriedTask.id)
+
+        XCTAssertTrue(reopened.state.laterTasks.isEmpty)
+        XCTAssertEqual(reopened.todayPlan.tasks.map(\.title), ["Read chapter", "Send update"])
+        XCTAssertNotEqual(reopened.todayPlan.tasks.first?.id, parkedID)
+        XCTAssertEqual(reopened.todayPlan.tasks.first?.lineageID, parkedID)
+        XCTAssertEqual(reopened.todayPlan.tasks.first?.habitID, habitID)
+        XCTAssertEqual(reopened.progressText, "0/2")
+    }
+
+    @MainActor
+    func testMovingFocusedTaskToLaterArchivesTheFocusSession() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-27")
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let taskID = try XCTUnwrap(store.addTask(title: "Deep work"))
+        let task = try XCTUnwrap(store.todayPlan.tasks.first)
+        store.updatePomodoroSettings(PomodoroSettings(focusDurationSeconds: 60, extensionDurationSeconds: 30))
+        XCTAssertTrue(store.startFocus(on: task))
+
+        now = now.addingTimeInterval(20)
+        store.moveTaskToLater(id: taskID)
+
+        XCTAssertEqual(store.focusPresentation, .idle)
+        XCTAssertEqual(store.state.pomodoro.records.count, 1)
+        XCTAssertEqual(store.state.pomodoro.records.first?.focusedSeconds, 20)
+        XCTAssertEqual(store.state.pomodoro.records.first?.outcome, .stopped)
+        XCTAssertEqual(store.state.laterTasks.map(\.id), [taskID])
+    }
+
+    @MainActor
     func testLinkedTaskCompletionCannotBeLoggedTwiceForTheSameDay() throws {
         let (repository, directory) = try repository()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -350,6 +437,19 @@ final class TodayStackTests: XCTestCase {
         let repeated = try TodayImportService.applying(data: data, to: first.state, calendar: calendar)
         XCTAssertFalse(repeated.changed)
         XCTAssertEqual(repeated.state, first.state)
+    }
+
+    func testImportingAParkedTaskMovesItOutOfLater() throws {
+        let parkedTask = TaskItem(id: "returning", title: "Old title")
+        let state = AppState(laterTasks: [parkedTask])
+        let file = TodayImportFile(date: "2026-08-27", tasks: [
+            ImportedTask(id: "returning", title: "Back today")
+        ])
+
+        let result = try TodayImportService.applying(file: file, to: state, calendar: calendar)
+
+        XCTAssertTrue(result.state.laterTasks.isEmpty)
+        XCTAssertEqual(result.state.days["2026-08-27"]?.tasks.map(\.title), ["Back today"])
     }
 
     func testInvalidImportDoesNotModifyState() throws {

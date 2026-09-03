@@ -145,10 +145,11 @@ public struct HabitSession: Codable, Equatable, Identifiable, Hashable, Sendable
 }
 
 public struct AppState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
 
     public var schemaVersion: Int
     public var days: [String: DayPlan]
+    public var laterTasks: [TaskItem]
     public var habits: [Habit]
     public var sessions: [HabitSession]
     public var pomodoro: PomodoroState
@@ -156,12 +157,14 @@ public struct AppState: Codable, Equatable, Sendable {
     public init(
         schemaVersion: Int = AppState.currentSchemaVersion,
         days: [String: DayPlan] = [:],
+        laterTasks: [TaskItem] = [],
         habits: [Habit] = [],
         sessions: [HabitSession] = [],
         pomodoro: PomodoroState = PomodoroState()
     ) {
         self.schemaVersion = schemaVersion
         self.days = days
+        self.laterTasks = laterTasks
         self.habits = habits
         self.sessions = sessions
         self.pomodoro = pomodoro
@@ -170,6 +173,7 @@ public struct AppState: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
         case days
+        case laterTasks
         case habits
         case sessions
         case pomodoro
@@ -178,9 +182,10 @@ public struct AppState: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let storedVersion = try container.decode(Int.self, forKey: .schemaVersion)
-        guard storedVersion == 1 || storedVersion == Self.currentSchemaVersion else {
+        guard (1...Self.currentSchemaVersion).contains(storedVersion) else {
             schemaVersion = storedVersion
             days = [:]
+            laterTasks = []
             habits = []
             sessions = []
             pomodoro = PomodoroState()
@@ -189,6 +194,7 @@ public struct AppState: Codable, Equatable, Sendable {
 
         schemaVersion = Self.currentSchemaVersion
         days = try container.decodeIfPresent([String: DayPlan].self, forKey: .days) ?? [:]
+        laterTasks = try container.decodeIfPresent([TaskItem].self, forKey: .laterTasks) ?? []
         habits = try container.decodeIfPresent([Habit].self, forKey: .habits) ?? []
         sessions = try container.decodeIfPresent([HabitSession].self, forKey: .sessions) ?? []
         pomodoro = try container.decodeIfPresent(PomodoroState.self, forKey: .pomodoro) ?? PomodoroState()

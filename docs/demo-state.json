@@ -58,12 +58,16 @@
     { "frequency": { "type": "daily" }, "iconName": "pencil.line", "id": "habit-write", "name": "Write", "slug": "write" },
     { "frequency": { "target": 3, "type": "weeklyTarget" }, "iconName": "leaf.fill", "id": "habit-reset", "name": "Reset", "slug": "reset" }
   ],
+  "laterTasks": [
+    { "habitID": "habit-make", "id": "later-plan", "isCompleted": false, "lineageID": "later-plan", "title": "Plan next month" },
+    { "habitID": "habit-reset", "id": "later-photos", "isCompleted": false, "lineageID": "later-photos", "title": "Organize the photo library" }
+  ],
   "pomodoro": {
     "activeTimer": null,
     "records": [],
     "settings": { "extensionDurationSeconds": 1500, "focusDurationSeconds": 1500 }
   },
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "sessions": [
     { "date": "2026-08-04", "habitID": "habit-move", "id": "s01", "source": "manual" },
     { "date": "2026-08-06", "habitID": "habit-make", "id": "s02", "source": "manual" },

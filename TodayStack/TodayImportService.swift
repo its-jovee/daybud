@@ -86,13 +86,17 @@ public enum TodayImportService {
             ))
         }
 
+        let incomingIDs = Set(importedTasks.map(\.id))
         var newState = state
         newState.days[date] = DayPlan(date: date, tasks: importedTasks)
+        let incomingLineages = Set(importedTasks.map(\.lineageID))
+        newState.laterTasks.removeAll { task in
+            incomingIDs.contains(task.id) || incomingLineages.contains(task.lineageID)
+        }
 
         // Replace task-created sessions for incoming IDs while retaining the
         // original session ID when the linked habit is unchanged. Sessions for
         // omitted tasks are left in history, as habit activity is historical data.
-        let incomingIDs = Set(importedTasks.map(\.id))
         let oldSessions = state.sessions
         var replacementByTaskID: [String: HabitSession] = [:]
         for task in importedTasks where task.isCompleted {

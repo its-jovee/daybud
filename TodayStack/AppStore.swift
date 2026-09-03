@@ -279,6 +279,43 @@ public final class AppStore: ObservableObject {
         persist()
     }
 
+    public func moveTaskToLater(id: String) {
+        guard !persistenceBlocked, var plan = state.days[todayDateKey],
+              let sourceIndex = plan.tasks.firstIndex(where: { $0.id == id && !$0.isCompleted }) else { return }
+        let task = plan.tasks.remove(at: sourceIndex)
+        archiveFocusIfNeeded(for: task, outcome: .stopped)
+        state.days[todayDateKey] = plan
+        state.laterTasks.append(task)
+        persist()
+    }
+
+    public func moveLaterTaskToToday(id: String, before targetID: String? = nil) {
+        guard !persistenceBlocked,
+              let sourceIndex = state.laterTasks.firstIndex(where: { $0.id == id }) else { return }
+        let parkedTask = state.laterTasks.remove(at: sourceIndex)
+        let restoredTask = TaskItem(
+            lineageID: parkedTask.lineageID,
+            title: parkedTask.title,
+            habitID: validHabitID(parkedTask.habitID)
+        )
+        var plan = state.days[todayDateKey, default: DayPlan(date: todayDateKey)]
+        if let targetID, let targetIndex = plan.tasks.firstIndex(where: { $0.id == targetID && !$0.isCompleted }) {
+            plan.tasks.insert(restoredTask, at: targetIndex)
+        } else {
+            plan.tasks.append(restoredTask)
+        }
+        state.days[todayDateKey] = plan
+        persist()
+    }
+
+    public func deleteLaterTask(id: String) {
+        guard !persistenceBlocked else { return }
+        let previousCount = state.laterTasks.count
+        state.laterTasks.removeAll(where: { $0.id == id })
+        guard state.laterTasks.count != previousCount else { return }
+        persist()
+    }
+
     public func setTaskCompleted(id: String, completed: Bool) {
         guard !persistenceBlocked, var plan = state.days[todayDateKey], let index = plan.tasks.firstIndex(where: { $0.id == id }) else { return }
         var task = plan.tasks[index]

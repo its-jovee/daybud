@@ -422,6 +422,11 @@ private struct ConfettiBurstView: View {
     }
 }
 
+private enum TaskDragOrigin {
+    case today
+    case later
+}
+
 private struct TodaySectionView<InlineEditor: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var store: AppStore
@@ -429,6 +434,12 @@ private struct TodaySectionView<InlineEditor: View>: View {
     @State private var dragTranslation: CGFloat = 0
     @State private var dropTargetTaskID: String?
     @State private var taskRowFrames: [String: CGRect] = [:]
+    @State private var todayDropFrame: CGRect = .zero
+    @State private var laterDropFrame: CGRect = .zero
+    @State private var draggedTaskOrigin: TaskDragOrigin?
+    @State private var isDropOverToday = false
+    @State private var isDropOverLater = false
+    @State private var isLaterExpanded = false
     @State private var completingTaskIDs: Set<String> = []
     let selectedTab: StackTab
     let onAdd: () -> Void
@@ -476,8 +487,23 @@ private struct TodaySectionView<InlineEditor: View>: View {
             )
             .transition(.move(edge: .top).combined(with: .opacity))
 
+            todayTasksArea
+
+            if selectedTab == .active {
+                laterSection
+                    .transition(.opacity)
+            }
+        }
+        .coordinateSpace(name: "today-task-list")
+        .onPreferenceChange(TaskRowFramePreferenceKey.self) { taskRowFrames = $0 }
+        .onPreferenceChange(TodayTaskDropFramePreferenceKey.self) { todayDropFrame = $0 }
+        .onPreferenceChange(LaterTaskDropFramePreferenceKey.self) { laterDropFrame = $0 }
+    }
+
+    private var todayTasksArea: some View {
+        VStack(alignment: .leading, spacing: 6) {
             if selectedTab == .active && visibleTasks.count > 1 {
-                Label("Click and hold a task, then drag to reorder", systemImage: "arrow.up.arrow.down")
+                Label("Hold and drag to reorder or move to Later", systemImage: "arrow.up.arrow.down")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 14)
@@ -507,6 +533,11 @@ private struct TodaySectionView<InlineEditor: View>: View {
                             isFocused: isFocused(task),
                             canStartFocus: !store.hasActiveFocusTimer && !completingTaskIDs.contains(task.id),
                             onStartFocus: { store.startFocus(on: task) },
+                            onMoveToLater: {
+                                withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                                    store.moveTaskToLater(id: task.id)
+                                }
+                            },
                             onEdit: { onEdit(task) },
                             onDelete: { onDelete(task.id) }
                         )
@@ -521,30 +552,154 @@ private struct TodaySectionView<InlineEditor: View>: View {
                             }
                         }
                         .overlay {
-                            if dropTargetTaskID == task.id {
+                            if dropTargetTaskID == task.id && !isDropOverLater {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .stroke(Color.accentColor.opacity(0.75), lineWidth: 1.5)
                                     .allowsHitTesting(false)
                             }
                         }
-                        .opacity(draggedTaskID == task.id ? 0.78 : 1)
-                        .scaleEffect(draggedTaskID == task.id ? 1.018 : 1)
-                        .offset(y: draggedTaskID == task.id ? dragTranslation : 0)
+                        .opacity(isDragging(task.id, from: .today) ? 0.78 : 1)
+                        .scaleEffect(isDragging(task.id, from: .today) ? 1.018 : 1)
+                        .offset(y: isDragging(task.id, from: .today) ? dragTranslation : 0)
                         .shadow(
-                            color: .black.opacity(draggedTaskID == task.id ? 0.18 : 0),
-                            radius: draggedTaskID == task.id ? 8 : 0,
-                            y: draggedTaskID == task.id ? 3 : 0
+                            color: .black.opacity(isDragging(task.id, from: .today) ? 0.18 : 0),
+                            radius: isDragging(task.id, from: .today) ? 8 : 0,
+                            y: isDragging(task.id, from: .today) ? 3 : 0
                         )
-                        .zIndex(draggedTaskID == task.id ? 2 : 0)
-                        .simultaneousGesture(taskReorderGesture(for: task.id))
+                        .zIndex(isDragging(task.id, from: .today) ? 2 : 0)
+                        .simultaneousGesture(taskDragGesture(for: task.id, origin: .today))
                     }
                 }
                 .animation(.snappy(duration: 0.24), value: store.todayPlan.tasks)
                 .padding(.horizontal, 8)
-                .coordinateSpace(name: "today-task-list")
-                .onPreferenceChange(TaskRowFramePreferenceKey.self) { taskRowFrames = $0 }
             }
         }
+        .frame(maxWidth: .infinity, minHeight: 42, alignment: .topLeading)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: TodayTaskDropFramePreferenceKey.self,
+                    value: proxy.frame(in: .named("today-task-list"))
+                )
+            }
+        }
+        .background {
+            if isDropOverToday {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.07))
+                    .padding(.horizontal, 6)
+            }
+        }
+    }
+
+    private var laterSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.snappy(duration: 0.24)) {
+                    isLaterExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "tray")
+                        .symbolVariant(isDropOverLater ? .fill : .none)
+                        .foregroundStyle(isDropOverLater ? Color.accentColor : Color.secondary)
+                    Text("Later")
+                        .font(.subheadline.weight(.semibold))
+
+                    if !store.state.laterTasks.isEmpty {
+                        Text("\(store.state.laterTasks.count)")
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(isDropOverLater ? Color.accentColor : Color.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.primary.opacity(0.07), in: Capsule())
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if isDropOverLater {
+                        Text("Release to save for later")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.tint)
+                            .transition(.opacity)
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isLaterExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isLaterExpanded ? "Collapse Later" : "Expand Later")
+
+            if isLaterExpanded {
+                if store.state.laterTasks.isEmpty {
+                    Text("Drag a task here to clear it from today.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 7)
+                        .padding(.bottom, 7)
+                } else {
+                    VStack(spacing: 2) {
+                        ForEach(Array(store.state.laterTasks.enumerated()), id: \.element.id) { index, task in
+                            LaterTaskRowView(
+                                task: task,
+                                habits: store.state.habits,
+                                onMoveToToday: {
+                                    withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                                        store.moveLaterTaskToToday(id: task.id)
+                                    }
+                                },
+                                onDelete: {
+                                    withAnimation(.snappy(duration: 0.22)) {
+                                        store.deleteLaterTask(id: task.id)
+                                    }
+                                }
+                            )
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .animation(staggeredAnimation(for: index), value: isLaterExpanded)
+                            .opacity(isDragging(task.id, from: .later) ? 0.78 : 1)
+                            .scaleEffect(isDragging(task.id, from: .later) ? 1.018 : 1)
+                            .offset(y: isDragging(task.id, from: .later) ? dragTranslation : 0)
+                            .shadow(
+                                color: .black.opacity(isDragging(task.id, from: .later) ? 0.18 : 0),
+                                radius: isDragging(task.id, from: .later) ? 8 : 0,
+                                y: isDragging(task.id, from: .later) ? 3 : 0
+                            )
+                            .zIndex(isDragging(task.id, from: .later) ? 2 : 0)
+                            .simultaneousGesture(taskDragGesture(for: task.id, origin: .later))
+                        }
+                    }
+                    .padding(.horizontal, 1)
+                    .padding(.bottom, 5)
+                }
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.top, 3)
+        .background {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(isDropOverLater ? Color.accentColor.opacity(0.11) : Color.primary.opacity(0.025))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(isDropOverLater ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.06), lineWidth: 1)
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: LaterTaskDropFramePreferenceKey.self,
+                    value: proxy.frame(in: .named("today-task-list"))
+                )
+            }
+        }
+        .padding(.horizontal, 8)
+        .animation(.snappy(duration: 0.2), value: isDropOverLater)
+        .animation(.snappy(duration: 0.24), value: store.state.laterTasks)
     }
 
     private var visibleTasks: [TaskItem] {
@@ -619,29 +774,69 @@ private struct TodaySectionView<InlineEditor: View>: View {
         }
     }
 
-    private func taskReorderGesture(for taskID: String) -> some Gesture {
+    private func taskDragGesture(for taskID: String, origin: TaskDragOrigin) -> some Gesture {
         DragGesture(minimumDistance: 5, coordinateSpace: .named("today-task-list"))
             .onChanged { value in
                 guard selectedTab == .active, !completingTaskIDs.contains(taskID) else { return }
                 if draggedTaskID == nil {
                     draggedTaskID = taskID
+                    draggedTaskOrigin = origin
                 }
-                guard draggedTaskID == taskID else { return }
+                guard draggedTaskID == taskID, draggedTaskOrigin == origin else { return }
                 dragTranslation = value.translation.height
-                dropTargetTaskID = reorderTarget(at: value.location.y, excluding: taskID)
+
+                switch origin {
+                case .today:
+                    isDropOverLater = expanded(laterDropFrame).contains(value.location)
+                    isDropOverToday = false
+                    dropTargetTaskID = isDropOverLater
+                        ? nil
+                        : reorderTarget(at: value.location.y, excluding: taskID)
+                case .later:
+                    isDropOverToday = expanded(todayDropFrame).contains(value.location)
+                    isDropOverLater = false
+                    dropTargetTaskID = isDropOverToday
+                        ? reorderTarget(at: value.location.y, excluding: taskID)
+                        : nil
+                }
             }
             .onEnded { _ in
-                guard draggedTaskID == taskID else { return }
+                guard draggedTaskID == taskID, draggedTaskOrigin == origin else { return }
                 let targetID = dropTargetTaskID
                 withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
-                    if let targetID {
-                        moveTask(taskID, over: targetID)
+                    switch origin {
+                    case .today:
+                        if isDropOverLater {
+                            store.moveTaskToLater(id: taskID)
+                        } else if let targetID {
+                            moveTask(taskID, over: targetID)
+                        }
+                    case .later:
+                        if isDropOverToday {
+                            store.moveLaterTaskToToday(id: taskID, before: targetID)
+                        }
                     }
-                    draggedTaskID = nil
-                    dropTargetTaskID = nil
-                    dragTranslation = 0
+                    resetDragState()
                 }
             }
+    }
+
+    private func isDragging(_ taskID: String, from origin: TaskDragOrigin) -> Bool {
+        draggedTaskID == taskID && draggedTaskOrigin == origin
+    }
+
+    private func expanded(_ frame: CGRect) -> CGRect {
+        guard !frame.isEmpty else { return .zero }
+        return frame.insetBy(dx: -6, dy: -8)
+    }
+
+    private func resetDragState() {
+        draggedTaskID = nil
+        draggedTaskOrigin = nil
+        dropTargetTaskID = nil
+        dragTranslation = 0
+        isDropOverToday = false
+        isDropOverLater = false
     }
 
     private func reorderTarget(at yPosition: CGFloat, excluding sourceID: String) -> String? {
@@ -693,6 +888,89 @@ private struct TaskRowFramePreferenceKey: PreferenceKey {
     }
 }
 
+private struct TodayTaskDropFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
+private struct LaterTaskDropFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
+private struct LaterTaskRowView: View {
+    @State private var isHovered = false
+    let task: TaskItem
+    let habits: [Habit]
+    let onMoveToToday: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "circle.dashed")
+                .foregroundStyle(.tertiary)
+                .imageScale(.medium)
+
+            Text(task.title)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            if let linkedHabit {
+                Image(systemName: linkedHabit.iconName ?? HabitIconCatalog.suggestedSymbol(for: linkedHabit.name))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(linkedHabitColor)
+                    .frame(width: 19, height: 19)
+                    .background(linkedHabitColor.opacity(0.11), in: Circle())
+                    .allowsHitTesting(false)
+                    .help("Counts toward \(linkedHabit.name)")
+                    .accessibilityLabel("Counts toward \(linkedHabit.name)")
+            }
+
+            Spacer(minLength: 0)
+
+            Menu {
+                Button("Move to Today", systemImage: "sun.max", action: onMoveToToday)
+                Divider()
+                Button("Delete task", role: .destructive, action: onDelete)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .foregroundStyle(.tertiary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .accessibilityLabel("More actions for \(task.title)")
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 6)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(isHovered ? 0.05 : 0.018))
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .help("Hold and drag \(task.title) back into Today")
+        .accessibilityHint("Hold and drag back into Today")
+        .animation(.easeInOut(duration: 0.14), value: isHovered)
+    }
+
+    private var linkedHabit: Habit? {
+        guard let habitID = task.habitID else { return nil }
+        return habits.first(where: { $0.id == habitID })
+    }
+
+    private var linkedHabitColor: Color {
+        guard let linkedHabit else { return .accentColor }
+        return HabitColorCatalog.color(for: linkedHabit, in: habits)
+    }
+}
+
 private struct TaskRowView: View {
     @State private var isHovered = false
     let task: TaskItem
@@ -704,6 +982,7 @@ private struct TaskRowView: View {
     let isFocused: Bool
     let canStartFocus: Bool
     let onStartFocus: () -> Void
+    let onMoveToLater: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
 
@@ -771,6 +1050,10 @@ private struct TaskRowView: View {
                     Menu("Counts toward", systemImage: "arrow.triangle.branch") {
                         habitMenuContent
                     }
+                    Divider()
+                }
+                if !task.isCompleted {
+                    Button("Move to Later", systemImage: "tray.and.arrow.down", action: onMoveToLater)
                     Divider()
                 }
                 Button("Edit task", action: onEdit)

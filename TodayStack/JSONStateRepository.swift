@@ -50,7 +50,7 @@ public final class JSONStateRepository: @unchecked Sendable {
         do {
             let data = try Data(contentsOf: stateURL)
             let storedVersion = try decoder.decode(SchemaEnvelope.self, from: data).schemaVersion
-            guard storedVersion == 1 || storedVersion == AppState.currentSchemaVersion else {
+            guard (1...AppState.currentSchemaVersion).contains(storedVersion) else {
                 throw JSONRepositoryError.unsupportedSchema(storedVersion)
             }
             let state = try decoder.decode(AppState.self, from: data)

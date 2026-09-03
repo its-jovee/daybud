@@ -18,6 +18,8 @@ Most task apps tell you what is unfinished. Most habit apps ask you to log the s
 
 Daybud connects the two. Finish **Write 500 words** and your **Write** habit moves forward automatically. Start a focus timer straight from **Ship the landing page**. Anything unfinished is waiting for you tomorrow — without duplicating it or turning your day into a backlog-management exercise.
 
+When today is simply too full, drag a task into **Later**. It leaves today's progress immediately, stays safely parked in a collapsed shelf, and can be dragged back whenever it becomes relevant again.
+
 <table>
   <tr>
     <td width="50%" align="center">
@@ -53,6 +55,7 @@ The result is a small loop that answers three useful questions at a glance: **Wh
 ### The useful details
 
 - Drag a task itself to reorder it — no tiny handle required.
+- Park a task in the collapsed Later shelf, then drag it back into Today when you are ready.
 - Switch between Active and Done without losing completed work.
 - See habits as compact, color-coded contribution grids.
 - Track goals such as “3 days per week” and soften habits once the goal is met.
