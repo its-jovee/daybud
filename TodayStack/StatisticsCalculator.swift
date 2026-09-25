@@ -26,14 +26,14 @@ public enum StatisticsPeriod: String, CaseIterable, Identifiable, Sendable {
 
 public enum StatisticsMetric: String, CaseIterable, Identifiable, Sendable {
     case tasks
-    case focus
+    case time
 
     public var id: String { rawValue }
 
     public var title: String {
         switch self {
         case .tasks: "Tasks"
-        case .focus: "Focus"
+        case .time: "Time"
         }
     }
 }
@@ -73,7 +73,7 @@ public struct StatisticsGroup: Equatable, Identifiable, Sendable {
     public func value(for metric: StatisticsMetric) -> Int {
         switch metric {
         case .tasks: completedTasks
-        case .focus: focusedSeconds
+        case .time: focusedSeconds
         }
     }
 }
@@ -143,6 +143,7 @@ public enum StatisticsCalculator {
             result[habit.id] = habit
         }
         var accumulators: [StatisticsGroupID: StatisticsAccumulator] = [:]
+        var timeByLineage: [String: LineageTimeAccumulator] = [:]
         var activeDateKeys = Set<String>()
 
         for (dateKey, plan) in state.days {
@@ -153,22 +154,42 @@ public enum StatisticsCalculator {
                 var accumulator = accumulators[groupID, default: StatisticsAccumulator()]
                 accumulator.completedTasks += 1
                 accumulators[groupID] = accumulator
+                var lineage = timeByLineage[task.lineageID, default: LineageTimeAccumulator()]
+                lineage.estimatedSeconds += task.durationMinutes * 60
+                lineage.completedGroupID = groupID
+                timeByLineage[task.lineageID] = lineage
                 activeDateKeys.insert(DateKey.string(from: date, calendar: calendar))
             }
         }
 
         for record in focusRecords where record.focusedSeconds > 0 && range.contains(record.startedAt) {
             let groupID = record.task.habitIDSnapshot.map(StatisticsGroupID.habit) ?? .general
-            var accumulator = accumulators[groupID, default: StatisticsAccumulator()]
-            accumulator.focusedSeconds += record.focusedSeconds
+            var lineage = timeByLineage[record.task.lineageID, default: LineageTimeAccumulator()]
+            lineage.focusedSeconds += record.focusedSeconds
+            lineage.focusGroupID = groupID
             if let snapshotName = record.task.habitNameSnapshot?.trimmingCharacters(in: .whitespacesAndNewlines),
                !snapshotName.isEmpty,
-               accumulator.latestFocusMetadataDate.map({ record.startedAt > $0 }) ?? true {
-                accumulator.focusTitle = snapshotName
-                accumulator.latestFocusMetadataDate = record.startedAt
+               lineage.latestFocusMetadataDate.map({ record.startedAt > $0 }) ?? true {
+                lineage.focusTitle = snapshotName
+                lineage.latestFocusMetadataDate = record.startedAt
+            }
+            timeByLineage[record.task.lineageID] = lineage
+            activeDateKeys.insert(DateKey.string(from: record.startedAt, calendar: calendar))
+        }
+
+        // A completed task always contributes its estimate. When a Pomodoro was
+        // also recorded for that task, use whichever is longer instead of
+        // double-counting the same work.
+        for lineage in timeByLineage.values {
+            let groupID = lineage.completedGroupID ?? lineage.focusGroupID ?? .general
+            var accumulator = accumulators[groupID, default: StatisticsAccumulator()]
+            accumulator.focusedSeconds += max(lineage.estimatedSeconds, lineage.focusedSeconds)
+            if let focusTitle = lineage.focusTitle,
+               lineage.latestFocusMetadataDate.map({ $0 > (accumulator.latestFocusMetadataDate ?? .distantPast) }) ?? false {
+                accumulator.focusTitle = focusTitle
+                accumulator.latestFocusMetadataDate = lineage.latestFocusMetadataDate
             }
             accumulators[groupID] = accumulator
-            activeDateKeys.insert(DateKey.string(from: record.startedAt, calendar: calendar))
         }
 
         let groups = accumulators.map { groupID, accumulator in
@@ -212,6 +233,15 @@ public enum StatisticsCalculator {
 private struct StatisticsAccumulator {
     var completedTasks = 0
     var focusedSeconds = 0
+    var focusTitle: String?
+    var latestFocusMetadataDate: Date?
+}
+
+private struct LineageTimeAccumulator {
+    var estimatedSeconds = 0
+    var focusedSeconds = 0
+    var completedGroupID: StatisticsGroupID?
+    var focusGroupID: StatisticsGroupID?
     var focusTitle: String?
     var latestFocusMetadataDate: Date?
 }

@@ -4,18 +4,24 @@ public struct StatisticsView: View {
     public let snapshot: StatisticsSnapshot
     @Binding private var period: StatisticsPeriod
     @Binding private var metric: StatisticsMetric
-    private let onClose: () -> Void
+    private let questState: QuestState
+    private let todayDateKey: String
+    private let calendar: Calendar
 
     public init(
         snapshot: StatisticsSnapshot,
         period: Binding<StatisticsPeriod>,
         metric: Binding<StatisticsMetric>,
-        onClose: @escaping () -> Void
+        questState: QuestState = QuestState(),
+        todayDateKey: String = DateKey.string(from: Date(), calendar: .current),
+        calendar: Calendar = .current
     ) {
         self.snapshot = snapshot
         self._period = period
         self._metric = metric
-        self.onClose = onClose
+        self.questState = questState
+        self.todayDateKey = todayDateKey
+        self.calendar = calendar
     }
 
     public var body: some View {
@@ -24,6 +30,7 @@ public struct StatisticsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    QuestWeeklyReviewView(state: questState, today: todayDateKey, calendar: calendar)
                     periodPicker
                     summary
                     breakdown
@@ -40,13 +47,6 @@ public struct StatisticsView: View {
             Label("Stats", systemImage: "chart.bar.xaxis")
                 .font(.headline)
             Spacer()
-            Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close statistics")
         }
         .padding(14)
     }
@@ -71,7 +71,7 @@ public struct StatisticsView: View {
                 systemImage: "checkmark.circle"
             )
             StatisticsSummaryCard(
-                title: "Focus",
+                title: "Time spent",
                 value: FocusDurationFormatter.string(seconds: snapshot.focusedSeconds),
                 systemImage: "timer"
             )
@@ -188,7 +188,7 @@ private struct StatisticsBarRow: View {
         switch metric {
         case .tasks:
             return "\(group.completedTasks)"
-        case .focus:
+        case .time:
             return FocusDurationFormatter.string(seconds: group.focusedSeconds)
         }
     }
@@ -199,12 +199,12 @@ private struct StatisticsEmptyState: View {
 
     var body: some View {
         ContentUnavailableView(
-            metric == .tasks ? "No completed tasks" : "No focus time yet",
+            metric == .tasks ? "No completed tasks" : "No time tracked yet",
             systemImage: metric == .tasks ? "checkmark.circle" : "timer",
             description: Text(
                 metric == .tasks
                     ? "Completed tasks will appear here."
-                    : "Start a timer on a task to see where your time goes."
+                    : "Complete a task or start its timer to see where your time goes."
             )
         )
         .frame(maxWidth: .infinity, minHeight: 150)

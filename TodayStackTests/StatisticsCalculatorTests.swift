@@ -143,8 +143,74 @@ final class StatisticsCalculatorTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.completedTasks, 2)
-        XCTAssertEqual(snapshot.focusedSeconds, 1_200)
+        XCTAssertEqual(snapshot.focusedSeconds, 4_200)
         XCTAssertEqual(snapshot.activeDays, 3)
+    }
+
+    func testCompletedTasksContributeTheirEstimatedDuration() {
+        let work = Habit(id: "work", slug: "work", name: "Work")
+        let state = AppState(
+            days: [
+                "2026-09-01": DayPlan(date: "2026-09-01", tasks: [
+                    TaskItem(id: "default", title: "Email", habitID: work.id, isCompleted: true),
+                    TaskItem(id: "long", title: "Gym", habitID: nil, isCompleted: true, durationMinutes: 75)
+                ])
+            ],
+            habits: [work]
+        )
+
+        let snapshot = StatisticsCalculator.snapshot(
+            state: state,
+            focusRecords: [],
+            period: .sevenDays,
+            today: date("2026-09-01T15:00:00Z"),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(snapshot.focusedSeconds, 100 * 60)
+        XCTAssertEqual(snapshot.groups.first(where: { $0.groupID == .habit("work") })?.focusedSeconds, 25 * 60)
+        XCTAssertEqual(snapshot.groups.first(where: { $0.groupID == .general })?.focusedSeconds, 75 * 60)
+    }
+
+    func testFocusAndEstimateForSameLineageUseLongerValueWithoutDoubleCounting() {
+        let completedTask = TaskItem(
+            id: "occurrence",
+            lineageID: "shared-lineage",
+            title: "Deep work",
+            isCompleted: true,
+            durationMinutes: 25
+        )
+        let state = AppState(days: [
+            "2026-09-01": DayPlan(date: "2026-09-01", tasks: [completedTask])
+        ])
+        let start = date("2026-09-01T09:00:00Z")
+        let record = FocusRecord(
+            id: "focus",
+            task: FocusTaskReference(
+                occurrenceID: "occurrence",
+                lineageID: "shared-lineage",
+                dateKey: "2026-09-01",
+                titleSnapshot: "Deep work",
+                habitIDSnapshot: nil,
+                habitNameSnapshot: nil
+            ),
+            startedAt: start,
+            endedAt: start.addingTimeInterval(40 * 60),
+            focusedSeconds: 40 * 60,
+            extensionCount: 1,
+            outcome: .completedTask
+        )
+
+        let snapshot = StatisticsCalculator.snapshot(
+            state: state,
+            focusRecords: [record],
+            period: .sevenDays,
+            today: date("2026-09-01T15:00:00Z"),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(snapshot.completedTasks, 1)
+        XCTAssertEqual(snapshot.focusedSeconds, 40 * 60)
     }
 
     func testRankingIsDeterministicAndAlwaysPlacesGeneralAfterTopFiveHabits() {
@@ -173,7 +239,7 @@ final class StatisticsCalculatorTests: XCTestCase {
             ["habit:a", "habit:b", "habit:z", "habit:c", "habit:d", "general"]
         )
         XCTAssertEqual(
-            snapshot.topGroups(for: .focus).map(\.id),
+            snapshot.topGroups(for: .time).map(\.id),
             ["habit:f", "habit:c", "habit:d", "habit:e", "habit:z", "general"]
         )
     }

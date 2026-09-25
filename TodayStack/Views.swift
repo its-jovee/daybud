@@ -1,15 +1,23 @@
 import AppKit
 import SwiftUI
 
-private enum StackTab: String, CaseIterable, Identifiable {
+private enum TaskListTab: String, CaseIterable, Identifiable {
     case active
     case done
-    case stats
 
     var id: String { rawValue }
 }
 
-private enum HabitIconCatalog {
+private enum DetailPage: String, Identifiable {
+    case profile
+    case stats
+    case quests
+    case rewards
+
+    var id: String { rawValue }
+}
+
+enum HabitIconCatalog {
     static let symbols = [
         "flame.fill",
         "dumbbell.fill",
@@ -75,7 +83,7 @@ private enum HabitIconCatalog {
     }
 }
 
-private enum HabitColorCatalog {
+enum HabitColorCatalog {
     static let colors: [Color] = [
         Color(red: 0.96, green: 0.39, blue: 0.49),
         Color(red: 0.96, green: 0.58, blue: 0.24),
@@ -118,11 +126,13 @@ private enum ActivePanel {
 struct MenuBarRootView: View {
     @ObservedObject var store: AppStore
     @State private var activePanel: ActivePanel?
-    @State private var selectedTab: StackTab = .active
+    @State private var selectedTab: TaskListTab = .active
+    @State private var selectedDetailPage: DetailPage?
     @State private var showingCelebration = false
     @State private var celebrationID = 0
     @State private var statisticsPeriod: StatisticsPeriod = .sevenDays
     @State private var statisticsMetric: StatisticsMetric = .tasks
+    @State private var convertingTask: TaskItem?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -135,6 +145,17 @@ struct MenuBarRootView: View {
                         .font(.caption.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
+                    Button {
+                        selectedDetailPage = selectedDetailPage == .rewards ? nil : .rewards
+                    } label: {
+                        Label("\(store.state.questSystem.balance)", systemImage: "circle.circle")
+                            .font(.caption.monospacedDigit().weight(.medium))
+                            .contentTransition(.numericText())
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Coins · Reward Shop & history")
+                    .accessibilityLabel("\(store.state.questSystem.balance) Coins. Open Reward Shop")
+                    .animation(.easeInOut(duration: 0.2), value: store.state.questSystem.balance)
                 }
 
                 ProgressView(
@@ -147,28 +168,50 @@ struct MenuBarRootView: View {
                 .accessibilityValue(store.progressText)
                 .animation(.easeInOut(duration: 0.3), value: store.completedTaskCount)
 
-                Picker("Items", selection: tabSelection) {
-                    Text("Active \(activeCount)").tag(StackTab.active)
-                    Text("Done \(store.completedTaskCount)").tag(StackTab.done)
-                    Label("Stats", systemImage: "chart.bar.xaxis").tag(StackTab.stats)
+                HStack(spacing: 10) {
+                    Picker("Tasks", selection: tabSelection) {
+                        Text("Active \(activeCount)").tag(TaskListTab.active)
+                        Text("Done \(store.completedTaskCount)").tag(TaskListTab.done)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(width: 176)
+
+                    Spacer(minLength: 0)
+
+                    DetailPageControl(selection: $selectedDetailPage)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
             }
             .padding(.horizontal, 14)
             .padding(.top, 14)
             .padding(.bottom, 10)
 
-            if selectedTab == .stats {
+            if selectedDetailPage == .quests {
+                QuestHubView(store: store, convertingTask: convertingTask, onClose: { selectedDetailPage = nil; convertingTask = nil })
+            } else if selectedDetailPage == .rewards {
+                RewardShopView(store: store, onClose: { selectedDetailPage = nil })
+            } else if selectedDetailPage == .stats {
                 StatisticsView(
                     snapshot: store.statisticsSnapshot(period: statisticsPeriod),
                     period: $statisticsPeriod,
                     metric: $statisticsMetric,
-                    onClose: { switchTab(to: .active) }
+                    questState: store.state.questSystem,
+                    todayDateKey: store.todayDateKey,
+                    calendar: store.calendar
                 )
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .transition(.opacity)
+            } else if selectedDetailPage == .profile {
+                ActivityProfileView(
+                    state: store.state,
+                    todayDateKey: store.todayDateKey,
+                    calendar: store.calendar,
+                    currentStreak: store.currentStreak(for:)
+                )
+                .transition(.opacity)
             } else {
+                DaybudContentScroll {
+                MainQuestsSection(store: store, onManage: { convertingTask = nil; selectedDetailPage = .quests })
                 if let activePanel, !activePanel.belongsToTodaySection {
                     inlinePanel(activePanel)
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -203,6 +246,7 @@ struct MenuBarRootView: View {
                         showPanel(.addTask)
                     },
                     onFocusSettings: { showPanel(.pomodoroSettings) },
+                    onConvertToQuest: { task in convertingTask = task; selectedDetailPage = .quests },
                     onEdit: { showPanel(.editTask($0)) },
                     onDelete: { id in
                         withAnimation(.snappy(duration: 0.24)) {
@@ -219,6 +263,7 @@ struct MenuBarRootView: View {
                 }
             }
 
+            }
             if let error = store.errorMessage {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -249,6 +294,11 @@ struct MenuBarRootView: View {
             }
         }
         .animation(.snappy(duration: 0.26), value: activePanel != nil)
+        .animation(.easeInOut(duration: 0.18), value: selectedDetailPage)
+        .onChange(of: selectedDetailPage) { _, page in
+            guard page != nil else { return }
+            activePanel = nil
+        }
         .onAppear { store.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             store.refresh()
@@ -263,25 +313,26 @@ struct MenuBarRootView: View {
     private func inlinePanel(_ panel: ActivePanel) -> some View {
         switch panel {
         case .addTask:
-            TaskEditorView(habits: store.state.habits, onCancel: closePanel) { title, habitID in
-                store.addTask(title: title, habitID: habitID)
-                closePanel()
+            TaskEditorView(habits: store.state.habits, quests: store.state.questSystem.activeQuests, onCancel: closePanel) { title, habitID, durationMinutes, purpose in
+                if store.addTask(title: title, habitID: habitID, durationMinutes: durationMinutes, purpose: purpose) != nil { closePanel() }
             }
             .id("add-task")
         case .addTaskForHabit(let habit):
             TaskEditorView(
                 habits: store.state.habits,
+                quests: store.state.questSystem.activeQuests,
                 preselectedHabitID: habit.id,
                 onCancel: closePanel
-            ) { title, habitID in
-                store.addTask(title: title, habitID: habitID)
-                closePanel()
+            ) { title, habitID, durationMinutes, purpose in
+                if store.addTask(title: title, habitID: habitID, durationMinutes: durationMinutes, purpose: purpose) != nil { closePanel() }
             }
             .id("add-task-for-habit-\(habit.id)")
         case .editTask(let task):
-            TaskEditorView(task: task, habits: store.state.habits, onCancel: closePanel) { title, habitID in
+            TaskEditorView(task: task, habits: store.state.habits, quests: store.state.questSystem.activeQuests, onCancel: closePanel) { title, habitID, durationMinutes, purpose in
+                if purpose != task.purpose && !store.assignTask(id: task.id, purpose: purpose) { return }
                 store.updateTaskTitle(id: task.id, title: title)
                 store.setTaskHabit(id: task.id, habitID: habitID)
+                store.updateTaskDuration(id: task.id, durationMinutes: durationMinutes)
                 closePanel()
             }
             .id("edit-task-\(task.id)")
@@ -333,17 +384,17 @@ struct MenuBarRootView: View {
         store.todayPlan.tasks.filter { !$0.isCompleted }.count
     }
 
-    private var tabSelection: Binding<StackTab> {
+    private var tabSelection: Binding<TaskListTab> {
         Binding(
             get: { selectedTab },
             set: { switchTab(to: $0) }
         )
     }
 
-    private func switchTab(to tab: StackTab) {
-        guard tab != selectedTab else { return }
+    private func switchTab(to tab: TaskListTab) {
         withAnimation(.spring(response: 0.58, dampingFraction: 0.86, blendDuration: 0.18)) {
             activePanel = nil
+            selectedDetailPage = nil
             selectedTab = tab
         }
     }
@@ -359,6 +410,45 @@ struct MenuBarRootView: View {
                 showingCelebration = false
             }
         }
+    }
+}
+
+private struct DetailPageControl: View {
+    @Binding var selection: DetailPage?
+
+    var body: some View {
+        HStack(spacing: 2) {
+            button("Profile", systemImage: "person.crop.circle", page: .profile)
+            button("Stats", systemImage: "chart.bar.xaxis", page: .stats)
+        }
+        .padding(2)
+        .background(Color.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func button(_ title: String, systemImage: String, page: DetailPage) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                selection = selection == page ? nil : page
+            }
+        } label: {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.titleOnly)
+                .font(.caption.weight(.medium))
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background {
+                    if selection == page {
+                        RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                            .fill(Color(nsColor: .controlBackgroundColor))
+                            .shadow(color: .black.opacity(0.16), radius: 1.5, y: 0.5)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(selection == page ? "Selected" : "Not selected")
     }
 }
 
@@ -438,13 +528,16 @@ private struct TodaySectionView<InlineEditor: View>: View {
     @State private var dropTargetTaskID: String?
     @State private var taskRowFrames: [String: CGRect] = [:]
     @State private var todayDropFrame: CGRect = .zero
+    @State private var laterDropFrame: CGRect = .zero
     @State private var isDropOverToday = false
     @State private var isDropOverLater = false
     @State private var isLaterExpanded = false
+    @State private var isSidequestsExpanded = false
     @State private var completingTaskIDs: Set<String> = []
-    let selectedTab: StackTab
+    let selectedTab: TaskListTab
     let onAdd: () -> Void
     let onFocusSettings: () -> Void
+    let onConvertToQuest: (TaskItem) -> Void
     let onEdit: (TaskItem) -> Void
     let onDelete: (String) -> Void
     let inlineEditor: () -> InlineEditor
@@ -498,6 +591,7 @@ private struct TodaySectionView<InlineEditor: View>: View {
         .coordinateSpace(name: "today-task-list")
         .onPreferenceChange(TaskRowFramePreferenceKey.self) { taskRowFrames = $0 }
         .onPreferenceChange(TodayTaskDropFramePreferenceKey.self) { todayDropFrame = $0 }
+        .onPreferenceChange(LaterTaskDropFramePreferenceKey.self) { laterDropFrame = $0 }
     }
 
     private var todayTasksArea: some View {
@@ -519,11 +613,23 @@ private struct TodaySectionView<InlineEditor: View>: View {
             } else {
                 VStack(spacing: 2) {
                     ForEach(Array(visibleTasks.enumerated()), id: \.element.id) { index, task in
+                        if selectedTab == .active && (index == 0 || priority(visibleTasks[index - 1]) != priority(task)) {
+                            if task.purpose == .sidequest {
+                                sidequestHeader
+                            } else {
+                            Text(store.isMainAction(task) ? "MAIN QUEST ACTIONS" : task.purpose == .sidequest ? "SIDEQUESTS" : "TASKS & ROUTINES")
+                                .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 7).padding(.top, 6)
+                            }
+                        }
                         dragEnabledTodayRow(TaskRowView(
                             task: task,
                             isCurrent: store.currentTask?.id == task.id,
                             isCompleting: completingTaskIDs.contains(task.id),
                             habits: store.state.habits,
+                            quests: store.state.questSystem.activeQuests,
+                            onAssignPurpose: { store.assignTask(id: task.id, purpose: $0) },
+                            onConvertToQuest: { onConvertToQuest(task) },
                             onToggle: { completed in toggleTask(task, completed: completed) },
                             onAssignHabit: { habitID in
                                 withAnimation(.snappy(duration: 0.22)) {
@@ -572,6 +678,9 @@ private struct TodaySectionView<InlineEditor: View>: View {
                 .animation(.snappy(duration: 0.24), value: store.todayPlan.tasks)
                 .padding(.horizontal, 8)
             }
+            if selectedTab == .active && (!isSidequestsExpanded || sidequestCount == 0) {
+                sidequestHeader.padding(.horizontal, 8)
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 42, alignment: .topLeading)
         .background {
@@ -589,6 +698,28 @@ private struct TodaySectionView<InlineEditor: View>: View {
                     .padding(.horizontal, 6)
             }
         }
+    }
+
+    private var sidequestHeader: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { isSidequestsExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isSidequestsExpanded ? "chevron.down" : "chevron.right")
+                    Text("Sidequests · \(sidequestCount)")
+                    Spacer()
+                    if store.hasMainProgressToday { Label("Enjoy exploring", systemImage: "checkmark.circle").foregroundStyle(.green) }
+                }.font(.caption).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel(isSidequestsExpanded ? "Collapse Sidequests" : "Expand Sidequests")
+                .accessibilityValue("\(sidequestCount) tasks. \(store.hasMainProgressToday ? "Main Quest advanced today. Enjoy exploring." : "Always available.")")
+            if !store.hasMainProgressToday {
+                Text("Main Quest first — Sidequests feel better afterwards.")
+                    .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+            } else if isSidequestsExpanded && sidequestCount == 0 {
+                Text("Mark any task as a Sidequest in its Priority menu.").font(.caption2).foregroundStyle(.secondary)
+            }
+        }.padding(.horizontal, 6).padding(.vertical, 7)
     }
 
     private var laterSection: some View {
@@ -691,12 +822,27 @@ private struct TodaySectionView<InlineEditor: View>: View {
         .padding(.horizontal, 8)
         .animation(.snappy(duration: 0.2), value: isDropOverLater)
         .animation(.snappy(duration: 0.24), value: store.state.laterTasks)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: LaterTaskDropFramePreferenceKey.self, value: proxy.frame(in: .named("today-task-list")))
+            }
+        }
     }
 
     private var visibleTasks: [TaskItem] {
         store.todayPlan.tasks.filter { task in
-            selectedTab == .done ? task.isCompleted : !task.isCompleted
+            selectedTab == .done ? task.isCompleted : (!task.isCompleted && (task.purpose != .sidequest || isSidequestsExpanded))
         }
+        .enumerated().sorted {
+            let left = priority($0.element), right = priority($1.element)
+            return left == right ? $0.offset < $1.offset : left < right
+        }.map(\.element)
+    }
+
+    private var sidequestCount: Int { store.todayPlan.tasks.filter { !$0.isCompleted && $0.purpose == .sidequest }.count }
+
+    private func priority(_ task: TaskItem) -> Int {
+        store.isMainAction(task) ? 0 : task.purpose == .sidequest ? 2 : 1
     }
 
     private func isFocused(_ task: TaskItem) -> Bool {
@@ -716,11 +862,10 @@ private struct TodaySectionView<InlineEditor: View>: View {
     private var emptyMessage: String {
         switch selectedTab {
         case .active:
+            if sidequestCount > 0 { return "Your Sidequests are below" }
             return store.todayPlan.tasks.isEmpty ? "Nothing planned yet" : "All tasks are done"
         case .done:
             return "Completed tasks land here"
-        case .stats:
-            return ""
         }
     }
 
@@ -833,19 +978,7 @@ private struct TodaySectionView<InlineEditor: View>: View {
     }
 
     private func isInLaterDropBand(_ location: CGPoint, excluding sourceID: String) -> Bool {
-        var frames = visibleTasks.compactMap { task in
-            task.id == sourceID ? nil : taskRowFrames[task.id]
-        }
-        if !dragStartTaskFrame.isEmpty { frames.append(dragStartTaskFrame) }
-        guard let first = frames.first else { return false }
-        let taskBounds = frames.dropFirst().reduce(first) { $0.union($1) }
-        let dropBand = CGRect(
-            x: taskBounds.minX - 10,
-            y: taskBounds.maxY + 2,
-            width: taskBounds.width + 20,
-            height: 160
-        )
-        return dropBand.contains(location)
+        return !laterDropFrame.isEmpty && laterDropFrame.insetBy(dx: 4, dy: -4).contains(location)
     }
 
     private func isInTodayDropArea(_ location: CGPoint) -> Bool {
@@ -921,7 +1054,16 @@ private struct TodayTaskDropFramePreferenceKey: PreferenceKey {
     static var defaultValue: CGRect = .zero
 
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
+        let next = nextValue()
+        if !next.isEmpty { value = next }
+    }
+}
+
+private struct LaterTaskDropFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if !next.isEmpty { value = next }
     }
 }
 
@@ -942,6 +1084,10 @@ private struct LaterTaskRowView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+
+            Text(DurationText.string(minutes: task.durationMinutes))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.tertiary)
 
             if let linkedHabit {
                 Image(systemName: linkedHabit.iconName ?? HabitIconCatalog.suggestedSymbol(for: linkedHabit.name))
@@ -998,6 +1144,9 @@ private struct TaskRowView: View {
     let isCurrent: Bool
     let isCompleting: Bool
     let habits: [Habit]
+    let quests: [MainQuest]
+    let onAssignPurpose: (TaskPurpose) -> Void
+    let onConvertToQuest: () -> Void
     let onToggle: (Bool) -> Void
     let onAssignHabit: (String?) -> Void
     let isFocused: Bool
@@ -1050,6 +1199,9 @@ private struct TaskRowView: View {
                             .accessibilityLabel("Counts toward \(linkedHabit.name)")
                     }
                 }
+                Text(DurationText.string(minutes: task.durationMinutes))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(task.isCompleted ? .tertiary : .secondary)
             }
 
             Spacer(minLength: 0)
@@ -1067,6 +1219,17 @@ private struct TaskRowView: View {
             }
 
             Menu {
+                Menu("Priority") {
+                    Button("Regular task") { onAssignPurpose(.regular) }
+                    Button("Sidequest") { onAssignPurpose(.sidequest) }
+                    Divider()
+                    ForEach(quests) { quest in
+                        Button("\(quest.emoji) \(quest.title)") { onAssignPurpose(.mainQuest(quest.id)) }
+                    }
+                    Divider()
+                    Button("Turn into a Main Quest…", action: onConvertToQuest)
+                }
+                Divider()
                 if !habits.isEmpty || task.habitID != nil {
                     Menu("Counts toward", systemImage: "arrow.triangle.branch") {
                         habitMenuContent
@@ -1201,6 +1364,8 @@ private struct HabitsSectionView: View {
                         hasManualLogToday: store.hasManualLogToday(habit: habit),
                         completionTaskTitle: store.completionTaskTitle(for: habit),
                         weeklyProgress: store.weeklyProgress(for: habit),
+                        currentStreak: store.currentStreak(for: habit),
+                        taskCompletionCountToday: store.taskCompletionCountToday(for: habit),
                         isCompleting: completingHabitIDs.contains(habit.id),
                         activityCounts: store.activityCounts(for: habit),
                         calendar: store.calendar,
@@ -1267,6 +1432,8 @@ private struct HabitsSectionView: View {
 private struct HabitActivityTile: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
+    @State private var showingStreakBurst = false
+    @State private var streakBurstID = 0
 
     let habit: Habit
     let tint: Color
@@ -1274,6 +1441,8 @@ private struct HabitActivityTile: View {
     let hasManualLogToday: Bool
     let completionTaskTitle: String?
     let weeklyProgress: WeeklyProgress?
+    let currentStreak: Int
+    let taskCompletionCountToday: Int
     let isCompleting: Bool
     let activityCounts: [String: Int]
     let calendar: Calendar
@@ -1311,6 +1480,18 @@ private struct HabitActivityTile: View {
                         : .easeOut(duration: 0.18).delay(isRevealed ? 0.035 : 0),
                     value: isRevealed
                 )
+
+            if currentStreak > 0 && !isRevealed {
+                streakBadge
+                    .transition(.scale(scale: 0.7).combined(with: .opacity))
+            }
+
+            if showingStreakBurst {
+                StreakFlameBurst(streak: currentStreak)
+                    .id(streakBurstID)
+                    .transition(.opacity)
+                    .zIndex(20)
+            }
         }
         .frame(width: 70, height: 60)
         .contentShape(Rectangle())
@@ -1324,6 +1505,10 @@ private struct HabitActivityTile: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.68), value: isCompleting)
         .animation(.snappy(duration: 0.26), value: isLoggedToday)
         .animation(.snappy(duration: 0.26), value: weeklyProgress?.isComplete)
+        .onChange(of: taskCompletionCountToday) { oldCount, newCount in
+            guard oldCount == 0, newCount > 0 else { return }
+            playStreakBurst()
+        }
         .zIndex(isRevealed ? 10 : 0)
         .help(helpText)
         .accessibilityElement(children: .ignore)
@@ -1372,6 +1557,35 @@ private struct HabitActivityTile: View {
                 .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(0.16), radius: 9, y: 3)
+    }
+
+    private var streakBadge: some View {
+        HStack(spacing: 1) {
+            Image(systemName: "flame.fill")
+            Text("\(currentStreak)")
+        }
+        .font(.system(size: 8, weight: .bold, design: .rounded).monospacedDigit())
+        .foregroundStyle(.orange)
+        .padding(.horizontal, 4)
+        .frame(height: 14)
+        .background(.regularMaterial, in: Capsule())
+        .overlay { Capsule().stroke(Color.orange.opacity(0.28), lineWidth: 0.5) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .padding(3)
+        .accessibilityLabel("\(currentStreak) \(weeklyProgress == nil ? "day" : "week") streak")
+    }
+
+    private func playStreakBurst() {
+        streakBurstID += 1
+        withAnimation(.easeOut(duration: 0.12)) {
+            showingStreakBurst = true
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: reduceMotion ? 500_000_000 : 1_050_000_000)
+            withAnimation(.easeOut(duration: 0.2)) {
+                showingStreakBurst = false
+            }
+        }
     }
 
     private var iconMenu: some View {
@@ -1470,6 +1684,45 @@ private struct HabitActivityTile: View {
     }
 }
 
+private struct StreakFlameBurst: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var animate = false
+    let streak: Int
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 29, weight: .bold))
+                    .foregroundStyle(.orange.gradient)
+                    .scaleEffect(animate ? 1 : 0.58)
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.yellow)
+                    .offset(y: animate ? 2 : 7)
+                    .opacity(animate ? 0.95 : 0.35)
+            }
+            Text("\(streak)")
+                .font(.caption2.bold().monospacedDigit())
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(.regularMaterial, in: Capsule())
+        }
+        .shadow(color: .orange.opacity(0.4), radius: animate ? 9 : 2)
+        .scaleEffect(animate ? 1 : 0.72)
+        .offset(y: animate && !reduceMotion ? -4 : 2)
+        .opacity(animate ? 1 : 0)
+        .onAppear {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.38, dampingFraction: 0.62)) {
+                animate = true
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Streak increased to \(streak)")
+    }
+}
+
 private struct HabitMiniMonthGrid: View {
     let tint: Color
     let activityCounts: [String: Int]
@@ -1550,25 +1803,32 @@ private struct MonthCell {
 private struct TaskEditorView: View {
     @State private var title: String
     @State private var habitSelection: String
+    @State private var durationMinutes: Int
+    @State private var purpose: TaskPurpose
 
     let task: TaskItem?
     let habits: [Habit]
+    let quests: [MainQuest]
     let onCancel: () -> Void
-    let onSave: (String, String?) -> Void
+    let onSave: (String, String?, Int, TaskPurpose) -> Void
 
     init(
         task: TaskItem? = nil,
         habits: [Habit],
+        quests: [MainQuest],
         preselectedHabitID: String? = nil,
         onCancel: @escaping () -> Void,
-        onSave: @escaping (String, String?) -> Void
+        onSave: @escaping (String, String?, Int, TaskPurpose) -> Void
     ) {
         self.task = task
         self.habits = habits
+        self.quests = quests
         self.onCancel = onCancel
         self.onSave = onSave
         _title = State(initialValue: task?.title ?? "")
         _habitSelection = State(initialValue: task?.habitID ?? preselectedHabitID ?? "")
+        _durationMinutes = State(initialValue: task?.durationMinutes ?? TaskItem.defaultDurationMinutes)
+        _purpose = State(initialValue: task?.purpose ?? .regular)
     }
 
     var body: some View {
@@ -1578,6 +1838,29 @@ private struct TaskEditorView: View {
             TextField("Task title", text: $title)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(save)
+            Picker("Priority", selection: $purpose) {
+                Text("Regular task").tag(TaskPurpose.regular)
+                Text("Sidequest").tag(TaskPurpose.sidequest)
+                ForEach(quests) { quest in
+                    Text("\(quest.emoji) \(quest.title)").tag(TaskPurpose.mainQuest(quest.id))
+                }
+                if let id = task?.purpose.questID, !quests.contains(where: { $0.id == id }) {
+                    Text("Previous Main Quest").tag(TaskPurpose.mainQuest(id))
+                }
+            }.pickerStyle(.menu)
+            HStack {
+                Label("Duration", systemImage: "clock")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Stepper(value: $durationMinutes, in: 5...480, step: 5) {
+                    Text(DurationText.string(minutes: durationMinutes))
+                        .font(.callout.monospacedDigit())
+                        .frame(minWidth: 48, alignment: .trailing)
+                }
+                .accessibilityLabel("Task duration")
+                .accessibilityValue(DurationText.string(minutes: durationMinutes))
+            }
             VStack(alignment: .leading, spacing: 5) {
                 Label("Counts toward", systemImage: "arrow.triangle.branch")
                     .font(.caption.weight(.semibold))
@@ -1621,7 +1904,7 @@ private struct TaskEditorView: View {
     private func save() {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        onSave(trimmed, habitSelection.isEmpty ? nil : habitSelection)
+        onSave(trimmed, habitSelection.isEmpty ? nil : habitSelection, durationMinutes, purpose)
     }
 
     private var selectedHabit: Habit? {

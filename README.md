@@ -57,12 +57,37 @@ The result is a small loop that answers three useful questions at a glance: **Wh
 - Drag a task itself to reorder it — no tiny handle required.
 - Park a task in the collapsed Later shelf, then drag it back into Today when you are ready.
 - Switch between Active and Done without losing completed work.
+- Give every task a 25-minute estimate by default, then adjust longer work before completing it.
 - See habits as compact, color-coded contribution grids.
+- Open Profile for a larger activity calendar and hover any day to see the work behind it.
+- Keep visible daily or weekly streaks, with a small flame moment when linked work advances one.
 - Track goals such as “3 days per week” and soften habits once the goal is met.
 - Give a day more intensity by completing several tasks for the same habit.
 - Review task and focus activity over 7 days, 30 days, or all time.
 - Get a native notification and sound when a focus session finishes.
 - Carry unfinished tasks into the next day automatically.
+
+### Main Quests, Sidequests & Coins
+
+Keep up to **two active Main Quests** visible above Today. Each is an outcome with optional measurable progress, a deadline, and linked next actions. Use **Manage** to create or edit quests, attach existing tasks, add actions, or archive a priority before activating another.
+
+Tasks stay regular by default. Choose a Main Quest or Sidequest in the task editor or its **Priority** menu. Sidequests start collapsed and remain available even before you make Main Quest progress. Quest links survive Later and next-day carryover.
+
+The compact Coin balance opens the Reward Shop and transaction history:
+
+| Activity | Coins |
+| --- | ---: |
+| First completion of a Main Quest action | 10 |
+| New measurable progress | 10 per quest/day |
+| First completion of a Sidequest | 2 |
+| Habit completion | 1 per habit/day |
+| Main Quest completion | 50, once |
+
+Undo/recheck, reclassification, carryover, and reopening a completed quest do not repeat rewards. Progress corrections are allowed; only an increase beyond the quest's previous high earns progress credit. Regular tasks earn no task Coins, but can still fulfill a linked habit. Old completed work is preserved without retroactive Coins.
+
+Customize rewards or redeem **🎮 1 hour gaming for 60 Coins**. Redemptions cannot take the balance below zero and retain the reward's name and price in history. These are local motivational Coins, not money. Stats includes a calendar-week review of Main Quest movement, meaningful days, actions, Sidequests, and Coins earned/spent. The Main Quest day streak uses the existing daily streak rules.
+
+All quests, links, claims, rewards, and transactions live in the same local state file. Schema 5 migrates older data automatically. No personal starting quests or tasks are included in the source or app bundle.
 
 ## Download
 
@@ -117,7 +142,7 @@ An optional external plan can be read from `~/.today-stack/today.json`; Daybud n
 }
 ```
 
-`id` is optional, `title` is required, and `habitSlug` is optional. A matching ID preserves completion state; a matching habit slug links the task to that habit. Reopen the menu-bar popover after changing the file.
+`id` is optional, `title` is required, and `habitSlug` and `durationMinutes` are optional. Tasks default to 25 minutes. A matching ID preserves completion state and its saved duration unless a new duration is supplied; a matching habit slug links the task to that habit. Reopen the menu-bar popover after changing the file.
 
 </details>
 

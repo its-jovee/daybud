@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B10000000000000000000001 /* QuestSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001; };
+		B10000000000000000000002 /* QuestViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002; };
+		B10000000000000000000003 /* QuestSystemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003; };
 		A10000000000000000000001 /* TodayStackApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* TodayStackApp.swift */; };
 		A10000000000000000000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* Models.swift */; };
 		A10000000000000000000003 /* JSONStateRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* JSONStateRepository.swift */; };
@@ -25,9 +28,13 @@
 		A10000000000000000000016 /* PomodoroEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* PomodoroEngineTests.swift */; };
 		A10000000000000000000017 /* StatisticsCalculatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* StatisticsCalculatorTests.swift */; };
 		A10000000000000000000018 /* PomodoroNotificationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* PomodoroNotificationScheduler.swift */; };
+		A10000000000000000000019 /* ActivityProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000019 /* ActivityProfileView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B20000000000000000000001 /* QuestSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestSystem.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* QuestViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestViews.swift; sourceTree = "<group>"; };
+		B20000000000000000000003 /* QuestSystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestSystemTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000001 /* TodayStackApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayStackApp.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		A20000000000000000000003 /* JSONStateRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONStateRepository.swift; sourceTree = "<group>"; };
@@ -46,6 +53,7 @@
 		A20000000000000000000016 /* PomodoroEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PomodoroEngineTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000017 /* StatisticsCalculatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsCalculatorTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000018 /* PomodoroNotificationScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PomodoroNotificationScheduler.swift; sourceTree = "<group>"; };
+		A20000000000000000000019 /* ActivityProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityProfileView.swift; sourceTree = "<group>"; };
 		A30000000000000000000001 /* TodayStack.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TodayStack.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A30000000000000000000002 /* TodayStackTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TodayStackTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -93,6 +101,9 @@
 				A20000000000000000000018 /* PomodoroNotificationScheduler.swift */,
 				A20000000000000000000014 /* StatisticsCalculator.swift */,
 				A20000000000000000000015 /* StatisticsView.swift */,
+				A20000000000000000000019 /* ActivityProfileView.swift */,
+				B20000000000000000000001 /* QuestSystem.swift */,
+				B20000000000000000000002 /* QuestViews.swift */,
 				A20000000000000000000010 /* Assets.xcassets */,
 				A20000000000000000000009 /* Info.plist */,
 			);
@@ -105,6 +116,7 @@
 				A20000000000000000000008 /* TodayStackTests.swift */,
 				A20000000000000000000016 /* PomodoroEngineTests.swift */,
 				A20000000000000000000017 /* StatisticsCalculatorTests.swift */,
+				B20000000000000000000003 /* QuestSystemTests.swift */,
 			);
 			path = TodayStackTests;
 			sourceTree = "<group>";
@@ -232,6 +244,9 @@
 				A10000000000000000000018 /* PomodoroNotificationScheduler.swift in Sources */,
 				A10000000000000000000014 /* StatisticsCalculator.swift in Sources */,
 				A10000000000000000000015 /* StatisticsView.swift in Sources */,
+				A10000000000000000000019 /* ActivityProfileView.swift in Sources */,
+				B10000000000000000000001 /* QuestSystem.swift in Sources */,
+				B10000000000000000000002 /* QuestViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -242,6 +257,7 @@
 				A10000000000000000000008 /* TodayStackTests.swift in Sources */,
 				A10000000000000000000016 /* PomodoroEngineTests.swift in Sources */,
 				A10000000000000000000017 /* StatisticsCalculatorTests.swift in Sources */,
+				B10000000000000000000003 /* QuestSystemTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

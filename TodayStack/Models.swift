@@ -49,6 +49,8 @@ public enum HabitFrequency: Codable, Hashable, Sendable {
 }
 
 public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
+    public static let defaultDurationMinutes = 25
+
     public let id: String
     /// Stable identity shared by each daily occurrence of a carried task.
     /// Pomodoro records use this to keep their relationship to the task even
@@ -57,19 +59,27 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
     public var title: String
     public var habitID: String?
     public var isCompleted: Bool
+    /// The user's expected time for this task. Completing a task without a
+    /// timer records this amount in Stats.
+    public var durationMinutes: Int
+    public var purpose: TaskPurpose
 
     public init(
         id: String = UUID().uuidString,
         lineageID: String? = nil,
         title: String,
         habitID: String? = nil,
-        isCompleted: Bool = false
+        isCompleted: Bool = false,
+        durationMinutes: Int = TaskItem.defaultDurationMinutes,
+        purpose: TaskPurpose = .regular
     ) {
         self.id = id
         self.lineageID = lineageID ?? id
         self.title = title
         self.habitID = habitID
         self.isCompleted = isCompleted
+        self.durationMinutes = Self.normalizedDuration(durationMinutes)
+        self.purpose = purpose
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -78,6 +88,8 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
         case title
         case habitID
         case isCompleted
+        case durationMinutes
+        case purpose
     }
 
     public init(from decoder: Decoder) throws {
@@ -87,6 +99,14 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
         title = try container.decode(String.self, forKey: .title)
         habitID = try container.decodeIfPresent(String.self, forKey: .habitID)
         isCompleted = try container.decode(Bool.self, forKey: .isCompleted)
+        durationMinutes = Self.normalizedDuration(
+            try container.decodeIfPresent(Int.self, forKey: .durationMinutes) ?? Self.defaultDurationMinutes
+        )
+        purpose = try container.decodeIfPresent(TaskPurpose.self, forKey: .purpose) ?? .regular
+    }
+
+    private static func normalizedDuration(_ minutes: Int) -> Int {
+        min(max(minutes, 1), 24 * 60)
     }
 }
 
@@ -145,7 +165,7 @@ public struct HabitSession: Codable, Equatable, Identifiable, Hashable, Sendable
 }
 
 public struct AppState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 5
 
     public var schemaVersion: Int
     public var days: [String: DayPlan]
@@ -153,6 +173,7 @@ public struct AppState: Codable, Equatable, Sendable {
     public var habits: [Habit]
     public var sessions: [HabitSession]
     public var pomodoro: PomodoroState
+    public var questSystem: QuestState
 
     public init(
         schemaVersion: Int = AppState.currentSchemaVersion,
@@ -160,7 +181,8 @@ public struct AppState: Codable, Equatable, Sendable {
         laterTasks: [TaskItem] = [],
         habits: [Habit] = [],
         sessions: [HabitSession] = [],
-        pomodoro: PomodoroState = PomodoroState()
+        pomodoro: PomodoroState = PomodoroState(),
+        questSystem: QuestState = QuestState()
     ) {
         self.schemaVersion = schemaVersion
         self.days = days
@@ -168,6 +190,7 @@ public struct AppState: Codable, Equatable, Sendable {
         self.habits = habits
         self.sessions = sessions
         self.pomodoro = pomodoro
+        self.questSystem = questSystem
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -177,6 +200,7 @@ public struct AppState: Codable, Equatable, Sendable {
         case habits
         case sessions
         case pomodoro
+        case questSystem
     }
 
     public init(from decoder: Decoder) throws {
@@ -189,6 +213,7 @@ public struct AppState: Codable, Equatable, Sendable {
             habits = []
             sessions = []
             pomodoro = PomodoroState()
+            questSystem = QuestState()
             return
         }
 
@@ -198,6 +223,11 @@ public struct AppState: Codable, Equatable, Sendable {
         habits = try container.decodeIfPresent([Habit].self, forKey: .habits) ?? []
         sessions = try container.decodeIfPresent([HabitSession].self, forKey: .sessions) ?? []
         pomodoro = try container.decodeIfPresent(PomodoroState.self, forKey: .pomodoro) ?? PomodoroState()
+        questSystem = try container.decodeIfPresent(QuestState.self, forKey: .questSystem) ?? QuestState()
+        if storedVersion < 5 {
+            questSystem.claimedTasks.formUnion(days.values.flatMap(\.tasks).filter(\.isCompleted).map(\.lineageID))
+            questSystem.claimedHabitDays.formUnion(sessions.map { "\($0.habitID):\($0.date)" })
+        }
     }
 }
 
@@ -205,11 +235,13 @@ public struct ImportedTask: Codable, Equatable, Sendable {
     public var id: String?
     public var title: String
     public var habitSlug: String?
+    public var durationMinutes: Int?
 
-    public init(id: String? = nil, title: String, habitSlug: String? = nil) {
+    public init(id: String? = nil, title: String, habitSlug: String? = nil, durationMinutes: Int? = nil) {
         self.id = id
         self.title = title
         self.habitSlug = habitSlug
+        self.durationMinutes = durationMinutes
     }
 }
 

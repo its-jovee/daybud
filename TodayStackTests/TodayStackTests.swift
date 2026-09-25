@@ -70,6 +70,7 @@ final class TodayStackTests: XCTestCase {
 
         XCTAssertEqual(migrated.schemaVersion, AppState.currentSchemaVersion)
         XCTAssertEqual(migrated.days["2026-08-27"]?.tasks.first?.lineageID, "legacy-task")
+        XCTAssertEqual(migrated.days["2026-08-27"]?.tasks.first?.durationMinutes, 25)
         XCTAssertEqual(migrated.pomodoro, PomodoroState())
         let persistedObject = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: repository.stateURL)) as? [String: Any]
@@ -125,7 +126,7 @@ final class TodayStackTests: XCTestCase {
         let store = AppStore(repository: repository, calendar: calendar, now: { now })
 
         let first = try XCTUnwrap(store.addTask(title: "First"))
-        let second = try XCTUnwrap(store.addTask(title: "Second"))
+        let second = try XCTUnwrap(store.addTask(title: "Second", durationMinutes: 75))
         let third = try XCTUnwrap(store.addTask(title: "Third"))
         XCTAssertEqual(store.progressText, "0/3")
         XCTAssertEqual(store.currentTask?.id, first)
@@ -153,6 +154,21 @@ final class TodayStackTests: XCTestCase {
             "A carried occurrence keeps the original task lineage"
         )
         XCTAssertEqual(store.state.days["2026-08-27"]?.tasks.count, 3)
+        XCTAssertEqual(store.todayPlan.tasks.first(where: { $0.lineageID == second })?.durationMinutes, 75)
+    }
+
+    @MainActor
+    func testTasksDefaultToTwentyFiveMinutesAndCanBeAdjusted() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AppStore(repository: repository, calendar: calendar, now: { self.date("2026-08-27") })
+        let taskID = try XCTUnwrap(store.addTask(title: "Gym"))
+
+        XCTAssertEqual(store.todayPlan.tasks.first(where: { $0.id == taskID })?.durationMinutes, 25)
+
+        store.updateTaskDuration(id: taskID, durationMinutes: 75)
+
+        XCTAssertEqual(store.todayPlan.tasks.first(where: { $0.id == taskID })?.durationMinutes, 75)
     }
 
     @MainActor
@@ -490,6 +506,36 @@ final class TodayStackTests: XCTestCase {
         XCTAssertEqual(StreakCalculator.currentStreak(for: habit, sessions: sessions, today: date("2026-08-27"), calendar: calendar), 3)
         XCTAssertEqual(StreakCalculator.longestStreak(for: habit, sessions: sessions, calendar: calendar), 3)
         XCTAssertEqual(sessions.count, 7, "Duplicate sessions count toward lifetime sessions")
+    }
+
+    func testWeeklyStreakStaysAliveDuringCurrentWeekAndBreaksAfterAMissedWeek() {
+        let habit = Habit(id: "weekly", slug: "weekly", name: "Gym", frequency: .weeklyTarget(3))
+        let completedPriorWeek = [
+            HabitSession(habitID: habit.id, date: "2026-08-24"),
+            HabitSession(habitID: habit.id, date: "2026-08-26"),
+            HabitSession(habitID: habit.id, date: "2026-08-28")
+        ]
+
+        XCTAssertEqual(
+            StreakCalculator.currentStreak(
+                for: habit,
+                sessions: completedPriorWeek,
+                today: date("2026-09-02"),
+                calendar: calendar
+            ),
+            1,
+            "A weekly streak remains active while the new week is still in progress"
+        )
+        XCTAssertEqual(
+            StreakCalculator.currentStreak(
+                for: habit,
+                sessions: completedPriorWeek,
+                today: date("2026-09-09"),
+                calendar: calendar
+            ),
+            0,
+            "The streak breaks only after the incomplete week rolls over"
+        )
     }
 
     func testWeeklyProgressCapsItsDisplayAfterTheGoalIsExceeded() {

@@ -64,7 +64,9 @@ public final class AppStore: ObservableObject {
     }
 
     public var currentTask: TaskItem? {
-        todayPlan.tasks.first(where: { !$0.isCompleted })
+        todayPlan.tasks.first(where: { !$0.isCompleted && isMainAction($0) })
+            ?? todayPlan.tasks.first(where: { !$0.isCompleted && $0.purpose != .sidequest })
+            ?? todayPlan.tasks.first(where: { !$0.isCompleted })
     }
 
     public var completedTaskCount: Int {
@@ -214,7 +216,12 @@ public final class AppStore: ObservableObject {
     }
 
     @discardableResult
-    public func addTask(title: String, habitID: String? = nil) -> String? {
+    public func addTask(
+        title: String,
+        habitID: String? = nil,
+        durationMinutes: Int = TaskItem.defaultDurationMinutes,
+        purpose: TaskPurpose = .regular
+    ) -> String? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             errorMessage = "Task titles cannot be empty."
@@ -222,10 +229,15 @@ public final class AppStore: ObservableObject {
         }
         guard !persistenceBlocked else { return nil }
         ensureTodayPlan(persist: false)
-        let task = TaskItem(title: trimmed, habitID: validHabitID(habitID))
-        state.days[todayDateKey, default: DayPlan(date: todayDateKey)].tasks.append(task)
-        persist()
-        return task.id
+        let task = TaskItem(
+            title: trimmed,
+            habitID: validHabitID(habitID),
+            durationMinutes: durationMinutes
+        )
+        return questChange { draft in
+            draft.days[todayDateKey, default: DayPlan(date: todayDateKey)].tasks.append(task)
+            try QuestEngine.assign(taskID: task.id, purpose: purpose, date: todayDateKey, state: &draft)
+        } ? task.id : nil
     }
 
     public func updateTaskTitle(id: String, title: String) {
@@ -236,6 +248,14 @@ public final class AppStore: ObservableObject {
         }
         guard !persistenceBlocked, var plan = state.days[todayDateKey], let index = plan.tasks.firstIndex(where: { $0.id == id }) else { return }
         plan.tasks[index].title = trimmed
+        state.days[todayDateKey] = plan
+        persist()
+    }
+
+    public func updateTaskDuration(id: String, durationMinutes: Int) {
+        guard !persistenceBlocked, var plan = state.days[todayDateKey],
+              let index = plan.tasks.firstIndex(where: { $0.id == id }) else { return }
+        plan.tasks[index].durationMinutes = min(max(durationMinutes, 1), 24 * 60)
         state.days[todayDateKey] = plan
         persist()
     }
@@ -296,7 +316,9 @@ public final class AppStore: ObservableObject {
         let restoredTask = TaskItem(
             lineageID: parkedTask.lineageID,
             title: parkedTask.title,
-            habitID: validHabitID(parkedTask.habitID)
+            habitID: validHabitID(parkedTask.habitID),
+            durationMinutes: parkedTask.durationMinutes,
+            purpose: parkedTask.purpose
         )
         var plan = state.days[todayDateKey, default: DayPlan(date: todayDateKey)]
         if let targetID, let targetIndex = plan.tasks.firstIndex(where: { $0.id == targetID && !$0.isCompleted }) {
@@ -318,6 +340,7 @@ public final class AppStore: ObservableObject {
 
     public func setTaskCompleted(id: String, completed: Bool) {
         guard !persistenceBlocked, var plan = state.days[todayDateKey], let index = plan.tasks.firstIndex(where: { $0.id == id }) else { return }
+        let previous = state
         var task = plan.tasks[index]
         guard task.isCompleted != completed else { return }
         task.isCompleted = completed
@@ -325,9 +348,12 @@ public final class AppStore: ObservableObject {
         state.days[todayDateKey] = plan
         synchronizeTaskSession(taskID: task.id, date: todayDateKey, habitID: task.habitID, completed: completed)
         if completed {
+            QuestEngine.recordTask(task, date: todayDateKey, now: nowProvider(), state: &state)
             archiveFocusIfNeeded(for: task, outcome: .completedTask)
         }
-        persist()
+        persist(revertingTo: previous)
+        synchronizeFocusNotification()
+        updateFocusTicker()
     }
 
     public func setTaskHabit(id: String, habitID: String?) {
@@ -411,6 +437,7 @@ public final class AppStore: ObservableObject {
     /// intact when a manual log is removed.
     public func toggleManualHabitToday(id: String) {
         guard !persistenceBlocked, state.habits.contains(where: { $0.id == id }) else { return }
+        let previous = state
         let date = todayDateKey
         let hasManualSession = state.sessions.contains { $0.habitID == id && $0.date == date && $0.source == .manual }
         if hasManualSession {
@@ -420,8 +447,9 @@ public final class AppStore: ObservableObject {
             // Do not create a second completion for the same day.
             guard !state.sessions.contains(where: { $0.habitID == id && $0.date == date }) else { return }
             state.sessions.append(HabitSession(habitID: id, date: date, source: .manual))
+            QuestEngine.recordHabit(id, date: date, now: nowProvider(), state: &state)
         }
-        persist()
+        persist(revertingTo: previous)
     }
 
     public func totalSessions(for habit: Habit) -> Int {
@@ -453,6 +481,12 @@ public final class AppStore: ObservableObject {
             $0.habitID == habit.id && $0.date == todayDateKey && $0.source == .task
         })?.taskID else { return nil }
         return todayPlan.tasks.first(where: { $0.id == taskID })?.title
+    }
+
+    public func taskCompletionCountToday(for habit: Habit) -> Int {
+        state.sessions.filter {
+            $0.habitID == habit.id && $0.date == todayDateKey && $0.source == .task
+        }.count
     }
 
     /// GitHub-style contribution levels for a habit. Completed linked tasks each
@@ -510,7 +544,9 @@ public final class AppStore: ObservableObject {
                 TaskItem(
                     lineageID: task.lineageID,
                     title: task.title,
-                    habitID: validHabitID(task.habitID)
+                    habitID: validHabitID(task.habitID),
+                    durationMinutes: task.durationMinutes,
+                    purpose: task.purpose
                 )
             } ?? []
         state.days[todayDateKey] = DayPlan(date: todayDateKey, tasks: carriedTasks)
@@ -530,6 +566,7 @@ public final class AppStore: ObservableObject {
 
     private func finishFocus(outcome: FocusOutcome, markTaskDone: Bool) {
         guard !persistenceBlocked else { return }
+        let previous = state
         let reference = focusedTaskReference
         let now = nowProvider()
         focusClock = now
@@ -544,6 +581,7 @@ public final class AppStore: ObservableObject {
             }
             plan.tasks[index].isCompleted = true
             let completedTask = plan.tasks[index]
+            QuestEngine.recordTask(completedTask, date: todayDateKey, now: now, state: &state)
             state.days[todayDateKey] = plan
             synchronizeTaskSession(
                 taskID: completedTask.id,
@@ -553,9 +591,9 @@ public final class AppStore: ObservableObject {
             )
         }
 
-        guard PomodoroEngine.end(outcome: outcome, at: now, state: &state.pomodoro) != nil else { return }
+        guard PomodoroEngine.end(outcome: outcome, at: now, state: &state.pomodoro) != nil else { state = previous; return }
 
-        persist()
+        persist(revertingTo: previous)
         synchronizeFocusNotification()
         updateFocusTicker()
     }
@@ -656,13 +694,81 @@ public final class AppStore: ObservableObject {
         return "\(base)-\(counter)"
     }
 
-    private func persist() {
-        guard !persistenceBlocked else { return }
+    @discardableResult
+    private func persist(revertingTo previous: AppState? = nil) -> Bool {
+        guard !persistenceBlocked else { return false }
         do {
             try repository.save(state)
+            return true
         } catch {
+            if let previous { state = previous }
             errorMessage = error.localizedDescription
+            return false
         }
+    }
+
+    public var hasMainProgressToday: Bool {
+        state.questSystem.activities.contains { $0.date == todayDateKey && $0.isMainProgress }
+    }
+
+    public var mainQuestStreak: Int {
+        let habit = Habit(id: "main-quest-streak", slug: "main-quest-streak", name: "Main Quest")
+        let sessions = Set(state.questSystem.activities.filter(\.isMainProgress).map(\.date)).map {
+            HabitSession(habitID: habit.id, date: $0)
+        }
+        return StreakCalculator.currentStreak(for: habit, sessions: sessions, today: nowProvider(), calendar: calendar)
+    }
+
+    public func isMainAction(_ task: TaskItem) -> Bool {
+        guard let id = task.purpose.questID else { return false }
+        return state.questSystem.activeQuests.contains { $0.id == id }
+    }
+
+    @discardableResult
+    public func saveQuest(_ quest: MainQuest, attachingTaskID: String? = nil) -> Bool {
+        questChange { draft in
+            try QuestEngine.saveQuest(quest, state: &draft)
+            if let attachingTaskID {
+                try QuestEngine.assign(taskID: attachingTaskID, purpose: .mainQuest(quest.id), date: todayDateKey, state: &draft)
+            }
+        }
+    }
+
+    @discardableResult
+    public func assignTask(id: String, purpose: TaskPurpose) -> Bool {
+        questChange { try QuestEngine.assign(taskID: id, purpose: purpose, date: todayDateKey, state: &$0) }
+    }
+
+    @discardableResult
+    public func updateQuestProgress(id: String, value: Double) -> Bool {
+        questChange { try QuestEngine.updateProgress(id: id, value: value, date: todayDateKey, now: nowProvider(), state: &$0) }
+    }
+
+    @discardableResult
+    public func setQuestStatus(id: String, status: MainQuest.Status, demoteTasks: Bool = false) -> Bool {
+        questChange { try QuestEngine.setStatus(id: id, status: status, demoteTasks: demoteTasks, date: todayDateKey, now: nowProvider(), state: &$0) }
+    }
+
+    @discardableResult
+    public func saveReward(_ reward: QuestReward) -> Bool {
+        questChange { try QuestEngine.saveReward(reward, state: &$0) }
+    }
+
+    @discardableResult
+    public func redeemReward(id: String, requestID: String) -> Bool {
+        questChange { try QuestEngine.redeem(id: id, requestID: requestID, date: todayDateKey, now: nowProvider(), state: &$0) }
+    }
+
+    private func questChange(_ change: (inout AppState) throws -> Void) -> Bool {
+        guard !persistenceBlocked else { return false }
+        do {
+            var draft = state
+            try change(&draft)
+            try repository.save(draft)
+            state = draft
+            errorMessage = nil
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
     }
 
     private static func slug(from value: String) -> String {
