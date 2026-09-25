@@ -338,8 +338,9 @@ public final class AppStore: ObservableObject {
               let sourceIndex = plan.tasks.firstIndex(where: { $0.id == id && !$0.isCompleted }) else { return }
         var task = plan.tasks.remove(at: sourceIndex)
         archiveFocusIfNeeded(for: task, outcome: .stopped)
-        // A parked copy is a one-off; the repeating task still returns on its next scheduled day.
-        task.repeatingTaskID = nil
+        // A copy parked in Later is a one-off; the repeating task still returns on its next
+        // scheduled day. A copy moved to tomorrow stays linked, so that occurrence replaces it.
+        if returnsOn == nil { task.repeatingTaskID = nil }
         task.returnsOn = returnsOn
         state.days[todayDateKey] = plan
         state.laterTasks.append(task)
@@ -368,26 +369,33 @@ public final class AppStore: ObservableObject {
         persist()
     }
 
-    /// Unfinished tasks from the most recent earlier day in the past week, so they can
-    /// be marked done on the day they were actually finished.
-    public var checkIn: DayCheckIn? {
+    /// Unfinished tasks from the most recent earlier day in the past week that still has
+    /// some, so they can be marked done on the day they were actually finished. Days up to
+    /// `answeredThrough` were already asked about, and work finished on a later day is skipped.
+    public func checkIn(answeredThrough: String = "") -> DayCheckIn? {
         let todayKey = todayDateKey
         guard let today = DateKey.date(from: todayKey, calendar: calendar),
               let windowStart = calendar.date(byAdding: .day, value: -Self.checkInWindowDays, to: today),
               let yesterday = calendar.date(byAdding: .day, value: -1, to: today) else { return nil }
         let startKey = DateKey.string(from: windowStart, calendar: calendar)
         // Date keys sort chronologically as strings.
-        guard let dateKey = state.days.keys.filter({ $0 >= startKey && $0 < todayKey }).max(),
-              let plan = state.days[dateKey],
-              let date = DateKey.date(from: dateKey, calendar: calendar) else { return nil }
+        let earlierKeys = state.days.keys
+            .filter { $0 >= startKey && $0 > answeredThrough && $0 < todayKey }
+            .sorted(by: >)
 
-        let finishedToday = Set(todayPlan.tasks.filter(\.isCompleted).map(\.lineageID))
-        let tasks = plan.tasks.filter { !$0.isCompleted && !finishedToday.contains($0.lineageID) }
-        guard !tasks.isEmpty else { return nil }
-        let title = dateKey == DateKey.string(from: yesterday, calendar: calendar)
-            ? "Yesterday"
-            : calendar.weekdaySymbols[calendar.component(.weekday, from: date) - 1]
-        return DayCheckIn(dateKey: dateKey, title: title, tasks: tasks)
+        var finishedLater = Set(todayPlan.tasks.filter(\.isCompleted).map(\.lineageID))
+        for dateKey in earlierKeys {
+            guard let plan = state.days[dateKey] else { continue }
+            let tasks = plan.tasks.filter { !$0.isCompleted && !finishedLater.contains($0.lineageID) }
+            if !tasks.isEmpty, let date = DateKey.date(from: dateKey, calendar: calendar) {
+                let title = dateKey == DateKey.string(from: yesterday, calendar: calendar)
+                    ? "Yesterday"
+                    : calendar.weekdaySymbols[calendar.component(.weekday, from: date) - 1]
+                return DayCheckIn(dateKey: dateKey, title: title, tasks: tasks)
+            }
+            finishedLater.formUnion(plan.tasks.filter(\.isCompleted).map(\.lineageID))
+        }
+        return nil
     }
 
     /// Marks unfinished tasks from an earlier day as done on that day, and clears
@@ -643,21 +651,28 @@ public final class AppStore: ObservableObject {
         let returningTasks = state.laterTasks.filter(isDue)
         if !returningTasks.isEmpty {
             state.laterTasks.removeAll(where: isDue)
-            state.days[todayDateKey]?.tasks += returningTasks.map { continuation(of: $0) }
+            // A deferred copy gives way when its repeating task already has an occurrence today.
+            let repeatingToday = Set(state.days[todayDateKey]?.tasks.compactMap(\.repeatingTaskID) ?? [])
+            let arriving = returningTasks.filter { !($0.repeatingTaskID.map(repeatingToday.contains) ?? false) }
+            state.days[todayDateKey]?.tasks += arriving.map { continuation(of: $0) }
             changed = true
         }
 
         if changed && shouldPersist { persist() }
     }
 
-    /// A new occurrence of a carried or parked task for today that keeps its lineage.
+    /// A new occurrence of a carried or parked task for today that keeps its lineage,
+    /// and its repeating task while that still exists.
     private func continuation(of task: TaskItem) -> TaskItem {
         TaskItem(
             lineageID: task.lineageID,
             title: task.title,
             habitID: validHabitID(task.habitID),
             durationMinutes: task.durationMinutes,
-            purpose: task.purpose
+            purpose: task.purpose,
+            repeatingTaskID: task.repeatingTaskID.flatMap { id in
+                state.repeatingTasks.contains { $0.id == id } ? id : nil
+            }
         )
     }
 
