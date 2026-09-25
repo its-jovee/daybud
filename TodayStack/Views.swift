@@ -575,8 +575,8 @@ private struct TodaySectionView<InlineEditor: View>: View {
     @State private var isDropOverLater = false
     @State private var isLaterExpanded = false
     @State private var completingTaskIDs: Set<String> = []
-    /// The earlier day whose check-in was answered or dismissed, so it is not asked again.
-    @AppStorage("answeredCheckInDate") private var answeredCheckInDate = ""
+    /// The latest earlier day whose check-in was answered or dismissed; days up to it are not asked again.
+    @AppStorage("checkInAnsweredThrough") private var checkInAnsweredThrough = ""
     let selectedTab: TaskListTab
     let onAdd: () -> Void
     let onFocusSettings: () -> Void
@@ -625,19 +625,19 @@ private struct TodaySectionView<InlineEditor: View>: View {
             )
             .transition(.move(edge: .top).combined(with: .opacity))
 
-            if selectedTab == .active, let checkIn = store.checkIn, checkIn.dateKey != answeredCheckInDate {
+            if selectedTab == .active, let checkIn = store.checkIn(answeredThrough: checkInAnsweredThrough) {
                 CheckInCard(
                     checkIn: checkIn,
                     onMarkDone: { ids in
                         withAnimation(.snappy(duration: 0.26)) {
                             if store.completeEarlierTasks(ids: ids, on: checkIn.dateKey) {
-                                answeredCheckInDate = checkIn.dateKey
+                                checkInAnsweredThrough = checkIn.dateKey
                             }
                         }
                     },
                     onDismiss: {
                         withAnimation(.snappy(duration: 0.22)) {
-                            answeredCheckInDate = checkIn.dateKey
+                            checkInAnsweredThrough = checkIn.dateKey
                         }
                     }
                 )

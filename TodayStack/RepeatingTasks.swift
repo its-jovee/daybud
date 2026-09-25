@@ -166,9 +166,13 @@ public enum RepeatingTaskEngine {
         state.days[date]!.tasks = tasks
     }
 
-    /// Stops repeating. Earlier occurrences stay as history; any occurrence on `date` becomes a one-off task.
+    /// Stops repeating. Earlier occurrences stay as history; any occurrence on `date`, or
+    /// moved from it to tomorrow, becomes a one-off task.
     public static func stop(id: String, date: String, state: inout AppState) {
         state.repeatingTasks.removeAll { $0.id == id }
+        for i in state.laterTasks.indices where state.laterTasks[i].repeatingTaskID == id {
+            state.laterTasks[i].repeatingTaskID = nil
+        }
         guard var tasks = state.days[date]?.tasks else { return }
         for i in tasks.indices where tasks[i].repeatingTaskID == id {
             tasks[i].repeatingTaskID = nil

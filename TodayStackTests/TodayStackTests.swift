@@ -387,12 +387,37 @@ final class TodayStackTests: XCTestCase {
         store.moveTaskToTomorrow(id: gymID)
         store.moveTaskToTomorrow(id: workID)
         XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Gym"])
-        XCTAssertEqual(store.state.laterTasks.map(\.repeatingTaskID), [nil])
+        XCTAssertEqual(store.state.laterTasks.map(\.repeatingTaskID), [work.repeatingTaskID])
 
         now = date("2026-08-29") // Saturday
         store.refresh()
         XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Gym", "Work"])
+        XCTAssertEqual(store.todayPlan.tasks.last?.repeatingTaskID, work.repeatingTaskID)
         XCTAssertEqual(store.state.repeatingTasks.count, 2)
+
+        now = date("2026-08-30") // Sunday: the unfinished deferred Work gives way like any occurrence
+        store.refresh()
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Gym"])
+
+        now = date("2026-08-31") // Monday
+        store.refresh()
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Gym", "Work"], "Exactly one Work")
+    }
+
+    @MainActor
+    func testDeferredRepeatingTaskGivesWayWhenItsReturnDayIsSkipped() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-28") // Friday
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let workID = try XCTUnwrap(store.addTask(title: "Work", repeatSchedule: .weekdays))
+        store.moveTaskToTomorrow(id: workID)
+
+        now = date("2026-08-31") // Monday, without opening Daybud over the weekend
+        store.refresh()
+
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Work"], "Monday's own Work replaces the deferred copy")
+        XCTAssertTrue(store.state.laterTasks.isEmpty)
     }
 
     @MainActor
@@ -407,11 +432,11 @@ final class TodayStackTests: XCTestCase {
         let readID = try XCTUnwrap(store.addTask(title: "Read"))
         let doneID = try XCTUnwrap(store.addTask(title: "Already done"))
         store.setTaskCompleted(id: doneID, completed: true)
-        XCTAssertNil(store.checkIn, "Nothing to ask about on the first day")
+        XCTAssertNil(store.checkIn(), "Nothing to ask about on the first day")
 
         now = date("2026-08-28")
         store.refresh()
-        let checkIn = try XCTUnwrap(store.checkIn)
+        let checkIn = try XCTUnwrap(store.checkIn())
         XCTAssertEqual(checkIn.dateKey, "2026-08-27")
         XCTAssertEqual(checkIn.title, "Yesterday")
         XCTAssertEqual(checkIn.tasks.map(\.id), [invoiceID, gymID, readID])
@@ -429,10 +454,33 @@ final class TodayStackTests: XCTestCase {
         XCTAssertEqual(store.state.pomodoro.records.map(\.focusedSeconds), [30])
         XCTAssertEqual(store.state.sessions.map(\.date), ["2026-08-27"])
         XCTAssertEqual(store.currentStreak(for: try XCTUnwrap(store.state.habits.first)), 1)
-        XCTAssertEqual(store.checkIn?.tasks.map(\.title), ["Read"])
+        XCTAssertEqual(store.checkIn()?.tasks.map(\.title), ["Read"])
 
         let reopened = AppStore(repository: repository, calendar: calendar, now: { now })
         XCTAssertEqual(reopened.state, store.state)
+    }
+
+    @MainActor
+    func testCheckInLooksPastADayWithNothingLeftAndSkipsAnsweredDays() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-24") // Monday
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let gymID = try XCTUnwrap(store.addTask(title: "Gym", repeatSchedule: .everyDay))
+        _ = try XCTUnwrap(store.addTask(title: "Write report"))
+
+        now = date("2026-08-25") // Tuesday: everything gets done, including the carried report
+        store.refresh()
+        for task in store.todayPlan.tasks {
+            store.setTaskCompleted(id: task.id, completed: true)
+        }
+
+        now = date("2026-08-26") // Wednesday, with Monday's check-in never answered
+        store.refresh()
+        let checkIn = try XCTUnwrap(store.checkIn())
+        XCTAssertEqual(checkIn.dateKey, "2026-08-24", "Tuesday has nothing left, so Monday is still asked about")
+        XCTAssertEqual(checkIn.tasks.map(\.id), [gymID], "Monday's report was finished on Tuesday")
+        XCTAssertNil(store.checkIn(answeredThrough: "2026-08-24"), "An answered day is not asked about again")
     }
 
     @MainActor
@@ -449,22 +497,22 @@ final class TodayStackTests: XCTestCase {
 
         now = date("2026-08-31") // Monday, after a Sunday without Daybud
         store.refresh()
-        XCTAssertEqual(store.checkIn?.title, "Saturday")
+        XCTAssertEqual(store.checkIn()?.title, "Saturday")
         let carriedReport = try XCTUnwrap(store.todayPlan.tasks.first(where: { $0.lineageID == reportID }))
         store.setTaskCompleted(id: carriedReport.id, completed: true)
-        XCTAssertEqual(store.checkIn?.tasks.map(\.title), ["Call the bank", "Book dentist"], "Work finished today is not asked about")
+        XCTAssertEqual(store.checkIn()?.tasks.map(\.title), ["Call the bank", "Book dentist"], "Work finished today is not asked about")
 
         let carriedDentist = try XCTUnwrap(store.todayPlan.tasks.first(where: { $0.lineageID == dentistID }))
         store.moveTaskToTomorrow(id: carriedDentist.id)
         XCTAssertTrue(store.completeEarlierTasks(ids: [dentistID], on: "2026-08-29"))
         XCTAssertTrue(store.state.laterTasks.isEmpty, "The parked copy is cleared too")
-        XCTAssertEqual(store.checkIn?.tasks.map(\.title), ["Call the bank"])
+        XCTAssertEqual(store.checkIn()?.tasks.map(\.title), ["Call the bank"])
         XCTAssertFalse(store.completeEarlierTasks(ids: [carriedReport.id], on: store.todayDateKey), "Only earlier days")
 
         now = date("2026-09-07") // The last plan is now a week old
         store.refresh()
         XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Call the bank"])
-        XCTAssertNil(store.checkIn)
+        XCTAssertNil(store.checkIn())
     }
 
     @MainActor
