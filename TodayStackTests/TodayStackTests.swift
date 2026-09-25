@@ -329,6 +329,145 @@ final class TodayStackTests: XCTestCase {
     }
 
     @MainActor
+    func testMovingATaskToTomorrowParksItUntilThen() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-27")
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        _ = try XCTUnwrap(store.addTask(title: "Send update"))
+        let invoiceID = try XCTUnwrap(store.addTask(title: "Send invoice"))
+
+        store.moveTaskToTomorrow(id: invoiceID)
+
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Send update"])
+        XCTAssertEqual(store.state.laterTasks.map(\.returnsOn), ["2026-08-28"])
+        let parked = try XCTUnwrap(store.state.laterTasks.first)
+        XCTAssertEqual(store.returnLabel(for: parked), "Tomorrow")
+
+        let reopened = AppStore(repository: repository, calendar: calendar, now: { now })
+        XCTAssertEqual(reopened.state.laterTasks.map(\.id), [invoiceID], "It stays parked for the rest of today")
+
+        now = date("2026-08-28")
+        reopened.refresh()
+        XCTAssertEqual(reopened.todayPlan.tasks.map(\.title), ["Send update", "Send invoice"])
+        XCTAssertEqual(reopened.todayPlan.tasks.last?.lineageID, invoiceID)
+        XCTAssertNil(reopened.todayPlan.tasks.last?.returnsOn)
+        XCTAssertTrue(reopened.state.laterTasks.isEmpty)
+    }
+
+    @MainActor
+    func testTaskMovedToTomorrowReturnsEvenWhenThatDayIsSkipped() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-27")
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let taskID = try XCTUnwrap(store.addTask(title: "Renew passport"))
+        store.moveTaskToTomorrow(id: taskID)
+
+        now = date("2026-08-30")
+        store.refresh()
+
+        XCTAssertEqual(store.todayPlan.tasks.map(\.lineageID), [taskID])
+        XCTAssertTrue(store.state.laterTasks.isEmpty)
+    }
+
+    @MainActor
+    func testRepeatingTaskMovesToTomorrowOnlyWhenTomorrowHasNoCopy() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-28") // Friday
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let gymID = try XCTUnwrap(store.addTask(title: "Gym", repeatSchedule: .everyDay))
+        let workID = try XCTUnwrap(store.addTask(title: "Work", repeatSchedule: .weekdays))
+        let gym = try XCTUnwrap(store.todayPlan.tasks.first(where: { $0.id == gymID }))
+        let work = try XCTUnwrap(store.todayPlan.tasks.first(where: { $0.id == workID }))
+
+        XCTAssertFalse(store.canMoveTaskToTomorrow(gym), "Tomorrow already gets its own Gym")
+        XCTAssertTrue(store.canMoveTaskToTomorrow(work), "Saturday has no Work")
+        store.moveTaskToTomorrow(id: gymID)
+        store.moveTaskToTomorrow(id: workID)
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Gym"])
+        XCTAssertEqual(store.state.laterTasks.map(\.repeatingTaskID), [nil])
+
+        now = date("2026-08-29") // Saturday
+        store.refresh()
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Gym", "Work"])
+        XCTAssertEqual(store.state.repeatingTasks.count, 2)
+    }
+
+    @MainActor
+    func testCheckInMarksYesterdaysTasksDoneOnTheDayTheyHappened() throws {
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-27")
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let habitID = try XCTUnwrap(store.addHabit(name: "Admin"))
+        let invoiceID = try XCTUnwrap(store.addTask(title: "Send invoice", habitID: habitID))
+        let gymID = try XCTUnwrap(store.addTask(title: "Gym", repeatSchedule: .everyDay))
+        let readID = try XCTUnwrap(store.addTask(title: "Read"))
+        let doneID = try XCTUnwrap(store.addTask(title: "Already done"))
+        store.setTaskCompleted(id: doneID, completed: true)
+        XCTAssertNil(store.checkIn, "Nothing to ask about on the first day")
+
+        now = date("2026-08-28")
+        store.refresh()
+        let checkIn = try XCTUnwrap(store.checkIn)
+        XCTAssertEqual(checkIn.dateKey, "2026-08-27")
+        XCTAssertEqual(checkIn.title, "Yesterday")
+        XCTAssertEqual(checkIn.tasks.map(\.id), [invoiceID, gymID, readID])
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Gym", "Send invoice", "Read"])
+
+        let carriedInvoice = try XCTUnwrap(store.todayPlan.tasks.first(where: { $0.lineageID == invoiceID }))
+        XCTAssertTrue(store.startFocus(on: carriedInvoice))
+        now = now.addingTimeInterval(30)
+        XCTAssertTrue(store.completeEarlierTasks(ids: [invoiceID, gymID], on: checkIn.dateKey))
+
+        let yesterday = try XCTUnwrap(store.state.days["2026-08-27"])
+        XCTAssertEqual(yesterday.tasks.filter(\.isCompleted).map(\.title), ["Send invoice", "Gym", "Already done"])
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Gym", "Read"], "Today's Gym is a separate occurrence and stays")
+        XCTAssertEqual(store.focusPresentation, .idle)
+        XCTAssertEqual(store.state.pomodoro.records.map(\.focusedSeconds), [30])
+        XCTAssertEqual(store.state.sessions.map(\.date), ["2026-08-27"])
+        XCTAssertEqual(store.currentStreak(for: try XCTUnwrap(store.state.habits.first)), 1)
+        XCTAssertEqual(store.checkIn?.tasks.map(\.title), ["Read"])
+
+        let reopened = AppStore(repository: repository, calendar: calendar, now: { now })
+        XCTAssertEqual(reopened.state, store.state)
+    }
+
+    @MainActor
+    func testCheckInSkipsWorkFinishedTodayClearsLaterAndLooksBackUnderAWeek() throws {
+        var calendar = self.calendar
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        let (repository, directory) = try repository()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var now = date("2026-08-29") // Saturday
+        let store = AppStore(repository: repository, calendar: calendar, now: { now })
+        let reportID = try XCTUnwrap(store.addTask(title: "Write report"))
+        _ = try XCTUnwrap(store.addTask(title: "Call the bank"))
+        let dentistID = try XCTUnwrap(store.addTask(title: "Book dentist"))
+
+        now = date("2026-08-31") // Monday, after a Sunday without Daybud
+        store.refresh()
+        XCTAssertEqual(store.checkIn?.title, "Saturday")
+        let carriedReport = try XCTUnwrap(store.todayPlan.tasks.first(where: { $0.lineageID == reportID }))
+        store.setTaskCompleted(id: carriedReport.id, completed: true)
+        XCTAssertEqual(store.checkIn?.tasks.map(\.title), ["Call the bank", "Book dentist"], "Work finished today is not asked about")
+
+        let carriedDentist = try XCTUnwrap(store.todayPlan.tasks.first(where: { $0.lineageID == dentistID }))
+        store.moveTaskToTomorrow(id: carriedDentist.id)
+        XCTAssertTrue(store.completeEarlierTasks(ids: [dentistID], on: "2026-08-29"))
+        XCTAssertTrue(store.state.laterTasks.isEmpty, "The parked copy is cleared too")
+        XCTAssertEqual(store.checkIn?.tasks.map(\.title), ["Call the bank"])
+        XCTAssertFalse(store.completeEarlierTasks(ids: [carriedReport.id], on: store.todayDateKey), "Only earlier days")
+
+        now = date("2026-09-07") // The last plan is now a week old
+        store.refresh()
+        XCTAssertEqual(store.todayPlan.tasks.map(\.title), ["Call the bank"])
+        XCTAssertNil(store.checkIn)
+    }
+
+    @MainActor
     func testMovingFocusedTaskToLaterArchivesTheFocusSession() throws {
         let (repository, directory) = try repository()
         defer { try? FileManager.default.removeItem(at: directory) }

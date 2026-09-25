@@ -575,6 +575,8 @@ private struct TodaySectionView<InlineEditor: View>: View {
     @State private var isDropOverLater = false
     @State private var isLaterExpanded = false
     @State private var completingTaskIDs: Set<String> = []
+    /// The earlier day whose check-in was answered or dismissed, so it is not asked again.
+    @AppStorage("answeredCheckInDate") private var answeredCheckInDate = ""
     let selectedTab: TaskListTab
     let onAdd: () -> Void
     let onFocusSettings: () -> Void
@@ -622,6 +624,26 @@ private struct TodaySectionView<InlineEditor: View>: View {
                 onOpenSettings: onFocusSettings
             )
             .transition(.move(edge: .top).combined(with: .opacity))
+
+            if selectedTab == .active, let checkIn = store.checkIn, checkIn.dateKey != answeredCheckInDate {
+                CheckInCard(
+                    checkIn: checkIn,
+                    onMarkDone: { ids in
+                        withAnimation(.snappy(duration: 0.26)) {
+                            if store.completeEarlierTasks(ids: ids, on: checkIn.dateKey) {
+                                answeredCheckInDate = checkIn.dateKey
+                            }
+                        }
+                    },
+                    onDismiss: {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            answeredCheckInDate = checkIn.dateKey
+                        }
+                    }
+                )
+                .id(checkIn.dateKey)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
 
             todayTasksArea
 
@@ -696,6 +718,12 @@ private struct TodaySectionView<InlineEditor: View>: View {
                             onMoveToLater: {
                                 withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
                                     store.moveTaskToLater(id: task.id)
+                                }
+                            },
+                            canMoveToTomorrow: store.canMoveTaskToTomorrow(task),
+                            onMoveToTomorrow: {
+                                withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                                    store.moveTaskToTomorrow(id: task.id)
                                 }
                             },
                             onEdit: { onEdit(task) },
@@ -812,6 +840,7 @@ private struct TodaySectionView<InlineEditor: View>: View {
                         ForEach(Array(store.state.laterTasks.enumerated()), id: \.element.id) { index, task in
                             LaterTaskRowView(
                                 task: task,
+                                returnLabel: store.returnLabel(for: task),
                                 habits: store.state.habits,
                                 onMoveToToday: {
                                     withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
@@ -1101,6 +1130,8 @@ private struct LaterTaskDropFramePreferenceKey: PreferenceKey {
 private struct LaterTaskRowView: View {
     @State private var isHovered = false
     let task: TaskItem
+    /// "Tomorrow" when the task returns to Today on its own.
+    let returnLabel: String?
     let habits: [Habit]
     let onMoveToToday: () -> Void
     let onDelete: () -> Void
@@ -1119,6 +1150,18 @@ private struct LaterTaskRowView: View {
             Text(DurationText.string(minutes: task.durationMinutes))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.tertiary)
+
+            if let returnLabel {
+                Label(returnLabel, systemImage: "sunrise")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                    .help(returnHint)
+                    .accessibilityLabel(returnHint)
+            }
 
             if let linkedHabit {
                 Image(systemName: linkedHabit.iconName ?? HabitIconCatalog.suggestedSymbol(for: linkedHabit.name))
@@ -1158,6 +1201,11 @@ private struct LaterTaskRowView: View {
         .animation(.easeInOut(duration: 0.14), value: isHovered)
     }
 
+    private var returnHint: String {
+        guard let returnLabel else { return "" }
+        return returnLabel == "Tomorrow" ? "Returns to Today tomorrow" : "Returns to Today on \(returnLabel)"
+    }
+
     private var linkedHabit: Habit? {
         guard let habitID = task.habitID else { return nil }
         return habits.first(where: { $0.id == habitID })
@@ -1166,6 +1214,103 @@ private struct LaterTaskRowView: View {
     private var linkedHabitColor: Color {
         guard let linkedHabit else { return .accentColor }
         return HabitColorCatalog.color(for: linkedHabit, in: habits)
+    }
+}
+
+/// Asks once per day whether unfinished tasks from the previous day were actually done.
+private struct CheckInCard: View {
+    @State private var isExpanded = false
+    @State private var selection: Set<String> = []
+    let checkIn: DayCheckIn
+    let onMarkDone: (Set<String>) -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("\(checkIn.title) · \(checkIn.tasks.count) unfinished")
+                                .font(.callout.weight(.semibold))
+                            Text("Finished any of them?")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(checkIn.title), \(checkIn.tasks.count) unfinished. Finished any of them?")
+                .accessibilityHint(isExpanded ? "Collapse" : "Expand to review")
+
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Not now")
+                .accessibilityLabel("Dismiss check-in")
+            }
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(checkIn.tasks) { task in
+                        Toggle(isOn: isSelected(task.id)) {
+                            Text(task.title)
+                                .font(.callout)
+                                .lineLimit(2)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                .padding(.leading, 2)
+
+                Text("Ticked tasks count for \(dayPhrase) and are cleared from Today.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Spacer()
+                    Button("Not now", action: onDismiss)
+                    Button(selection.isEmpty ? "Mark done" : "Mark \(selection.count) done") {
+                        onMarkDone(selection)
+                    }
+                    .disabled(selection.isEmpty)
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 8)
+    }
+
+    private var dayPhrase: String {
+        checkIn.title == "Yesterday" ? "yesterday" : checkIn.title
+    }
+
+    private func isSelected(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { selection.contains(id) },
+            set: { isOn in
+                selection.remove(id)
+                if isOn { selection.insert(id) }
+            }
+        )
     }
 }
 
@@ -1330,6 +1475,8 @@ private struct TaskRowView: View {
     let canStartFocus: Bool
     let onStartFocus: () -> Void
     let onMoveToLater: () -> Void
+    let canMoveToTomorrow: Bool
+    let onMoveToTomorrow: () -> Void
     let onEdit: () -> Void
     let onStopRepeating: () -> Void
     let onDelete: () -> Void
@@ -1423,6 +1570,9 @@ private struct TaskRowView: View {
                 }
                 if !task.isCompleted {
                     Button("Move to Later", systemImage: "tray.and.arrow.down", action: onMoveToLater)
+                    if canMoveToTomorrow {
+                        Button("Move to tomorrow", systemImage: "sunrise", action: onMoveToTomorrow)
+                    }
                     Divider()
                 }
                 Button("Edit task", action: onEdit)
