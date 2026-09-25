@@ -65,6 +65,8 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
     public var purpose: TaskPurpose
     /// The repeating task this occurrence was created from, if any.
     public var repeatingTaskID: String?
+    /// For a task parked in Later: the day it returns to Today on its own.
+    public var returnsOn: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -74,7 +76,8 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
         isCompleted: Bool = false,
         durationMinutes: Int = TaskItem.defaultDurationMinutes,
         purpose: TaskPurpose = .regular,
-        repeatingTaskID: String? = nil
+        repeatingTaskID: String? = nil,
+        returnsOn: String? = nil
     ) {
         self.id = id
         self.lineageID = lineageID ?? id
@@ -84,6 +87,7 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
         self.durationMinutes = Self.normalizedDuration(durationMinutes)
         self.purpose = purpose
         self.repeatingTaskID = repeatingTaskID
+        self.returnsOn = returnsOn
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -95,6 +99,7 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
         case durationMinutes
         case purpose
         case repeatingTaskID
+        case returnsOn
     }
 
     public init(from decoder: Decoder) throws {
@@ -109,6 +114,7 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
         )
         purpose = try container.decodeIfPresent(TaskPurpose.self, forKey: .purpose) ?? .regular
         repeatingTaskID = try container.decodeIfPresent(String.self, forKey: .repeatingTaskID)
+        returnsOn = try container.decodeIfPresent(String.self, forKey: .returnsOn)
     }
 
     static func normalizedDuration(_ minutes: Int) -> Int {
@@ -124,6 +130,14 @@ public struct DayPlan: Codable, Equatable, Hashable, Sendable {
         self.date = date
         self.tasks = tasks
     }
+}
+
+/// Unfinished tasks from an earlier day that the morning check-in asks about.
+public struct DayCheckIn: Equatable, Sendable {
+    public let dateKey: String
+    /// "Yesterday", or the weekday name of an earlier day.
+    public let title: String
+    public let tasks: [TaskItem]
 }
 
 public struct Habit: Codable, Equatable, Identifiable, Hashable, Sendable {
@@ -171,7 +185,8 @@ public struct HabitSession: Codable, Equatable, Identifiable, Hashable, Sendable
 }
 
 public struct AppState: Codable, Equatable, Sendable {
-    /// Schema 6 adds repeating tasks and retires Sidequests (stored ones load as regular tasks).
+    /// Schema 6 adds repeating tasks and dated Later tasks, and retires Sidequests
+    /// (stored ones load as regular tasks).
     public static let currentSchemaVersion = 6
 
     public var schemaVersion: Int

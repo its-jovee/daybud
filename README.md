@@ -58,6 +58,8 @@ The result is a small loop that answers three useful questions at a glance: **Wh
 
 - Drag a task itself to reorder it — no tiny handle required.
 - Park a task in the collapsed Later shelf, then drag it back into Today when you are ready.
+- Choose **Move to tomorrow** to park a task until the next day, when it returns to Today on its own.
+- Forgot to tick something off? The next morning, Daybud asks once whether yesterday's unfinished tasks were actually done, and records the ones you tick on the day they happened, so the habit and its streak keep up.
 - Make a task repeat every day, on weekdays, or on the days you pick. Unfinished copies are replaced by the next one rather than piling up.
 - Give a habit a default task with **Plan a repeating task** from its menu, then manage every routine from the collapsed Repeating shelf.
 - Skip a repeating task for today without touching its schedule, or stop repeating it and keep today's copy.
