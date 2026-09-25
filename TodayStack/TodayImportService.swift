@@ -84,7 +84,8 @@ public enum TodayImportService {
                 habitID: habitID,
                 isCompleted: isCompleted,
                 durationMinutes: imported.durationMinutes ?? existingTask?.durationMinutes ?? TaskItem.defaultDurationMinutes,
-                purpose: existingTask?.purpose ?? .regular
+                purpose: existingTask?.purpose ?? .regular,
+                repeatingTaskID: existingTask?.repeatingTaskID
             ))
         }
 

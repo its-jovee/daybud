@@ -2,12 +2,42 @@ import Foundation
 
 public enum TaskPurpose: Codable, Equatable, Hashable, Sendable {
     case regular
-    case sidequest
     case mainQuest(String)
 
     public var questID: String? {
         if case .mainQuest(let id) = self { return id }
         return nil
+    }
+
+    // Matches the synthesized `{"regular":{}}` / `{"mainQuest":{"_0":id}}` shape so
+    // existing state files still load. Sidequests were removed; stored ones become regular tasks.
+    private enum CodingKeys: String, CodingKey { case regular, mainQuest, sidequest }
+    private enum MainQuestCodingKeys: String, CodingKey { case _0 }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard container.allKeys.count == 1, let key = container.allKeys.first else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Expected exactly one task purpose"))
+        }
+        switch key {
+        case .regular, .sidequest:
+            self = .regular
+        case .mainQuest:
+            let nested = try container.nestedContainer(keyedBy: MainQuestCodingKeys.self, forKey: .mainQuest)
+            self = .mainQuest(try nested.decode(String.self, forKey: ._0))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .regular:
+            // An untouched nested container encodes as an empty object.
+            _ = container.nestedContainer(keyedBy: MainQuestCodingKeys.self, forKey: .regular)
+        case .mainQuest(let id):
+            var nested = container.nestedContainer(keyedBy: MainQuestCodingKeys.self, forKey: .mainQuest)
+            try nested.encode(id, forKey: ._0)
+        }
     }
 }
 
@@ -56,7 +86,11 @@ public struct CoinTransaction: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct QuestActivity: Codable, Equatable, Identifiable, Sendable {
-    public enum Kind: String, Codable, Sendable { case mainAction, progress, completedQuest, sidequest }
+    public enum Kind: String, Codable, Sendable {
+        case mainAction, progress, completedQuest
+        /// A Sidequest completion recorded before Sidequests were removed. Kept so history still decodes.
+        case legacySidequest = "sidequest"
+    }
     public var id = UUID().uuidString
     public var questID: String?
     public var kind: Kind
@@ -64,7 +98,7 @@ public struct QuestActivity: Codable, Equatable, Identifiable, Sendable {
     public var date: String
     public var timestamp: Date
     public var valueChange: Double = 0
-    public var isMainProgress: Bool { kind != .sidequest }
+    public var isMainProgress: Bool { kind != .legacySidequest }
 }
 
 public struct QuestState: Codable, Equatable, Sendable {
@@ -136,7 +170,6 @@ public enum QuestEngine {
             switch task.purpose {
             case .mainQuest(let id) where state.questSystem.activeQuests.contains(where: { $0.id == id }):
                 kind = .mainAction; amount = 10
-            case .sidequest: kind = .sidequest; amount = 2
             default: kind = nil; amount = 0
             }
             if let kind {
@@ -186,11 +219,14 @@ public enum QuestEngine {
         if demoteTasks {
             for key in state.days.keys where key >= date {
                 for i in state.days[key]!.tasks.indices where state.days[key]!.tasks[i].purpose.questID == id && !state.days[key]!.tasks[i].isCompleted {
-                    state.days[key]!.tasks[i].purpose = .sidequest
+                    state.days[key]!.tasks[i].purpose = .regular
                 }
             }
             for i in state.laterTasks.indices where state.laterTasks[i].purpose.questID == id {
-                state.laterTasks[i].purpose = .sidequest
+                state.laterTasks[i].purpose = .regular
+            }
+            for i in state.repeatingTasks.indices where state.repeatingTasks[i].purpose.questID == id {
+                state.repeatingTasks[i].purpose = .regular
             }
         }
     }

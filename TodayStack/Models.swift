@@ -63,6 +63,8 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
     /// timer records this amount in Stats.
     public var durationMinutes: Int
     public var purpose: TaskPurpose
+    /// The repeating task this occurrence was created from, if any.
+    public var repeatingTaskID: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -71,7 +73,8 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
         habitID: String? = nil,
         isCompleted: Bool = false,
         durationMinutes: Int = TaskItem.defaultDurationMinutes,
-        purpose: TaskPurpose = .regular
+        purpose: TaskPurpose = .regular,
+        repeatingTaskID: String? = nil
     ) {
         self.id = id
         self.lineageID = lineageID ?? id
@@ -80,6 +83,7 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
         self.isCompleted = isCompleted
         self.durationMinutes = Self.normalizedDuration(durationMinutes)
         self.purpose = purpose
+        self.repeatingTaskID = repeatingTaskID
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -90,6 +94,7 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
         case isCompleted
         case durationMinutes
         case purpose
+        case repeatingTaskID
     }
 
     public init(from decoder: Decoder) throws {
@@ -103,9 +108,10 @@ public struct TaskItem: Codable, Equatable, Identifiable, Hashable, Sendable {
             try container.decodeIfPresent(Int.self, forKey: .durationMinutes) ?? Self.defaultDurationMinutes
         )
         purpose = try container.decodeIfPresent(TaskPurpose.self, forKey: .purpose) ?? .regular
+        repeatingTaskID = try container.decodeIfPresent(String.self, forKey: .repeatingTaskID)
     }
 
-    private static func normalizedDuration(_ minutes: Int) -> Int {
+    static func normalizedDuration(_ minutes: Int) -> Int {
         min(max(minutes, 1), 24 * 60)
     }
 }
@@ -165,11 +171,13 @@ public struct HabitSession: Codable, Equatable, Identifiable, Hashable, Sendable
 }
 
 public struct AppState: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 5
+    /// Schema 6 adds repeating tasks and retires Sidequests (stored ones load as regular tasks).
+    public static let currentSchemaVersion = 6
 
     public var schemaVersion: Int
     public var days: [String: DayPlan]
     public var laterTasks: [TaskItem]
+    public var repeatingTasks: [RepeatingTask]
     public var habits: [Habit]
     public var sessions: [HabitSession]
     public var pomodoro: PomodoroState
@@ -179,6 +187,7 @@ public struct AppState: Codable, Equatable, Sendable {
         schemaVersion: Int = AppState.currentSchemaVersion,
         days: [String: DayPlan] = [:],
         laterTasks: [TaskItem] = [],
+        repeatingTasks: [RepeatingTask] = [],
         habits: [Habit] = [],
         sessions: [HabitSession] = [],
         pomodoro: PomodoroState = PomodoroState(),
@@ -187,6 +196,7 @@ public struct AppState: Codable, Equatable, Sendable {
         self.schemaVersion = schemaVersion
         self.days = days
         self.laterTasks = laterTasks
+        self.repeatingTasks = repeatingTasks
         self.habits = habits
         self.sessions = sessions
         self.pomodoro = pomodoro
@@ -197,6 +207,7 @@ public struct AppState: Codable, Equatable, Sendable {
         case schemaVersion
         case days
         case laterTasks
+        case repeatingTasks
         case habits
         case sessions
         case pomodoro
@@ -210,6 +221,7 @@ public struct AppState: Codable, Equatable, Sendable {
             schemaVersion = storedVersion
             days = [:]
             laterTasks = []
+            repeatingTasks = []
             habits = []
             sessions = []
             pomodoro = PomodoroState()
@@ -220,6 +232,7 @@ public struct AppState: Codable, Equatable, Sendable {
         schemaVersion = Self.currentSchemaVersion
         days = try container.decodeIfPresent([String: DayPlan].self, forKey: .days) ?? [:]
         laterTasks = try container.decodeIfPresent([TaskItem].self, forKey: .laterTasks) ?? []
+        repeatingTasks = try container.decodeIfPresent([RepeatingTask].self, forKey: .repeatingTasks) ?? []
         habits = try container.decodeIfPresent([Habit].self, forKey: .habits) ?? []
         sessions = try container.decodeIfPresent([HabitSession].self, forKey: .sessions) ?? []
         pomodoro = try container.decodeIfPresent(PomodoroState.self, forKey: .pomodoro) ?? PomodoroState()

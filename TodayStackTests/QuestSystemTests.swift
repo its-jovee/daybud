@@ -25,9 +25,11 @@ final class QuestSystemTests: XCTestCase {
         let task = TaskItem(title: "Action", purpose: .mainQuest(first.id))
         state.days[day] = DayPlan(date: day, tasks: [task])
         state.laterTasks = [TaskItem(title: "Parked action", purpose: .mainQuest(first.id))]
+        state.repeatingTasks = [RepeatingTask(title: "Daily action", purpose: .mainQuest(first.id), schedule: .everyDay)]
         try QuestEngine.setStatus(id: first.id, status: .archived, demoteTasks: true, date: day, now: now, state: &state)
-        XCTAssertEqual(state.days[day]?.tasks.first?.purpose, .sidequest)
-        XCTAssertEqual(state.laterTasks.first?.purpose, .sidequest)
+        XCTAssertEqual(state.days[day]?.tasks.first?.purpose, .regular)
+        XCTAssertEqual(state.laterTasks.first?.purpose, .regular)
+        XCTAssertEqual(state.repeatingTasks.first?.purpose, .regular)
         try QuestEngine.saveQuest(third, state: &state)
         XCTAssertThrowsError(try QuestEngine.setStatus(id: first.id, status: .active, date: day, now: now, state: &state))
         XCTAssertEqual(state.questSystem.activeQuests.count, 2)
@@ -42,7 +44,7 @@ final class QuestSystemTests: XCTestCase {
         task.isCompleted = false
         QuestEngine.recordTask(task, date: day, now: now, state: &state)
         task.isCompleted = true
-        task.purpose = .sidequest
+        task.purpose = .regular
         QuestEngine.recordTask(task, date: day, now: now, state: &state)
         let carried = TaskItem(lineageID: task.lineageID, title: "Carried action", isCompleted: true, purpose: .mainQuest(quest.id))
         QuestEngine.recordTask(carried, date: "2026-09-06", now: now, state: &state)
@@ -54,16 +56,15 @@ final class QuestSystemTests: XCTestCase {
     func testRegularAndHabitRewardsStaySeparateAndDoNotFarm() throws {
         let habit = Habit(slug: "study", name: "Study")
         var state = AppState(habits: [habit])
-        var task = TaskItem(title: "Study", habitID: habit.id, isCompleted: true)
+        let task = TaskItem(title: "Study", habitID: habit.id, isCompleted: true)
         QuestEngine.recordTask(task, date: day, now: now, state: &state)
-        task.purpose = .sidequest
         QuestEngine.recordTask(task, date: day, now: now, state: &state)
         QuestEngine.recordHabit(habit.id, date: day, now: now, state: &state)
         XCTAssertEqual(state.questSystem.balance, 1)
         XCTAssertTrue(state.questSystem.activities.isEmpty)
-        QuestEngine.recordTask(TaskItem(title: "Optional action", isCompleted: true, purpose: .sidequest), date: day, now: now, state: &state)
-        XCTAssertEqual(state.questSystem.balance, 3)
-        XCTAssertFalse(state.questSystem.activities.first!.isMainProgress)
+        QuestEngine.recordTask(TaskItem(title: "Another regular task", isCompleted: true), date: day, now: now, state: &state)
+        XCTAssertEqual(state.questSystem.balance, 1)
+        XCTAssertTrue(state.questSystem.activities.isEmpty)
     }
 
     func testMeasurableProgressDailyCapAndHighWaterAcrossDays() throws {
@@ -119,7 +120,7 @@ final class QuestSystemTests: XCTestCase {
         {"schemaVersion":4,"days":{"2026-09-05":{"date":"2026-09-05","tasks":[{"id":"old","title":"Old task","isCompleted":true,"durationMinutes":40}]}},"sessions":[{"id":"session","habitID":"habit","date":"2026-09-05","source":"manual"}]}
         """#.utf8)
         let state = try JSONDecoder().decode(AppState.self, from: legacy)
-        XCTAssertEqual(state.schemaVersion, 5)
+        XCTAssertEqual(state.schemaVersion, AppState.currentSchemaVersion)
         XCTAssertEqual(state.days[day]?.tasks.first?.durationMinutes, 40)
         XCTAssertEqual(state.days[day]?.tasks.first?.purpose, .regular)
         XCTAssertEqual(state.questSystem.claimedTasks, ["old"])
@@ -129,8 +130,35 @@ final class QuestSystemTests: XCTestCase {
         XCTAssertTrue(state.questSystem.quests.isEmpty)
     }
 
+    func testVersionFiveSidequestsBecomeRegularTasksAndKeepTheirHistory() throws {
+        let legacy = Data(#"""
+        {"schemaVersion":5,
+         "days":{"2026-09-05":{"date":"2026-09-05","tasks":[
+           {"id":"side","title":"Explore","isCompleted":false,"purpose":{"sidequest":{}}},
+           {"id":"main","title":"Ship","isCompleted":false,"purpose":{"mainQuest":{"_0":"quest"}}}]}},
+         "laterTasks":[{"id":"parked","title":"Wander","isCompleted":false,"purpose":{"sidequest":{}}}],
+         "questSystem":{"quests":[],"rewards":[],"transactions":[{"id":"task:old","amount":2,"title":"Explore","date":"2026-09-04","timestamp":0}],
+           "activities":[{"id":"a","kind":"sidequest","title":"Explore","date":"2026-09-04","timestamp":0,"valueChange":0}],
+           "claimedTasks":["old"],"claimedHabitDays":[]}}
+        """#.utf8)
+        let state = try JSONDecoder().decode(AppState.self, from: legacy)
+        XCTAssertEqual(state.schemaVersion, AppState.currentSchemaVersion)
+        XCTAssertEqual(state.days[day]?.tasks.map(\.purpose), [.regular, .mainQuest("quest")])
+        XCTAssertEqual(state.laterTasks.first?.purpose, .regular)
+        XCTAssertTrue(state.repeatingTasks.isEmpty)
+        XCTAssertEqual(state.questSystem.activities.first?.kind, .legacySidequest)
+        XCTAssertFalse(state.questSystem.activities.first!.isMainProgress)
+        XCTAssertEqual(state.questSystem.balance, 2, "Coins earned from Sidequests are kept")
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        XCTAssertEqual(String(decoding: try encoder.encode(TaskPurpose.regular), as: UTF8.self), #"{"regular":{}}"#)
+        XCTAssertEqual(String(decoding: try encoder.encode(TaskPurpose.mainQuest("quest")), as: UTF8.self), #"{"mainQuest":{"_0":"quest"}}"#)
+        XCTAssertEqual(try JSONDecoder().decode(AppState.self, from: encoder.encode(state)), state)
+    }
+
     @MainActor
-    func testCompleteUserFlowPersistsAndUnlocksSidequests() throws {
+    func testCompleteUserFlowPersistsAndRecordsMainProgress() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Daybud-QuestFlow-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let repository = JSONStateRepository(directoryURL: directory)

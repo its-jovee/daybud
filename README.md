@@ -20,6 +20,8 @@ Daybud connects the two. Finish **Write 500 words** and your **Write** habit mov
 
 When today is simply too full, drag a task into **Later**. It leaves today's progress immediately, stays safely parked in a collapsed shelf, and can be dragged back whenever it becomes relevant again.
 
+Some tasks are simply part of the week. Set **Gym** to repeat every day, or give your **Work** habit a default task on weekdays, and a fresh copy lands in Today on each of those days — even after you finished the last one.
+
 <table>
   <tr>
     <td width="50%" align="center">
@@ -56,6 +58,9 @@ The result is a small loop that answers three useful questions at a glance: **Wh
 
 - Drag a task itself to reorder it — no tiny handle required.
 - Park a task in the collapsed Later shelf, then drag it back into Today when you are ready.
+- Make a task repeat every day, on weekdays, or on the days you pick. Unfinished copies are replaced by the next one rather than piling up.
+- Give a habit a default task with **Plan a repeating task** from its menu, then manage every routine from the collapsed Repeating shelf.
+- Skip a repeating task for today without touching its schedule, or stop repeating it and keep today's copy.
 - Switch between Active and Done without losing completed work.
 - Give every task a 25-minute estimate by default, then adjust longer work before completing it.
 - See habits as compact, color-coded contribution grids.
@@ -67,11 +72,11 @@ The result is a small loop that answers three useful questions at a glance: **Wh
 - Get a native notification and sound when a focus session finishes.
 - Carry unfinished tasks into the next day automatically.
 
-### Main Quests, Sidequests & Coins
+### Main Quests & Coins
 
 Keep up to **two active Main Quests** visible above Today. Each is an outcome with optional measurable progress, a deadline, and linked next actions. Use **Manage** to create or edit quests, attach existing tasks, add actions, or archive a priority before activating another.
 
-Tasks stay regular by default. Choose a Main Quest or Sidequest in the task editor or its **Priority** menu. Sidequests start collapsed and remain available even before you make Main Quest progress. Quest links survive Later and next-day carryover.
+Tasks stay regular by default. Choose a Main Quest in the task editor or its **Priority** menu. Quest links survive Later, next-day carryover, and repeating tasks — each day's copy of a repeating Main Quest action counts as a new action.
 
 The compact Coin balance opens the Reward Shop and transaction history:
 
@@ -79,15 +84,14 @@ The compact Coin balance opens the Reward Shop and transaction history:
 | --- | ---: |
 | First completion of a Main Quest action | 10 |
 | New measurable progress | 10 per quest/day |
-| First completion of a Sidequest | 2 |
 | Habit completion | 1 per habit/day |
 | Main Quest completion | 50, once |
 
 Undo/recheck, reclassification, carryover, and reopening a completed quest do not repeat rewards. Progress corrections are allowed; only an increase beyond the quest's previous high earns progress credit. Regular tasks earn no task Coins, but can still fulfill a linked habit. Old completed work is preserved without retroactive Coins.
 
-Customize rewards or redeem **🎮 1 hour gaming for 60 Coins**. Redemptions cannot take the balance below zero and retain the reward's name and price in history. These are local motivational Coins, not money. Stats includes a calendar-week review of Main Quest movement, meaningful days, actions, Sidequests, and Coins earned/spent. The Main Quest day streak uses the existing daily streak rules.
+Customize rewards or redeem **🎮 1 hour gaming for 60 Coins**. Redemptions cannot take the balance below zero and retain the reward's name and price in history. These are local motivational Coins, not money. Stats includes a calendar-week review of Main Quest movement, meaningful days, actions, and Coins earned/spent. The Main Quest day streak uses the existing daily streak rules.
 
-All quests, links, claims, rewards, and transactions live in the same local state file. Schema 5 migrates older data automatically. No personal starting quests or tasks are included in the source or app bundle.
+All quests, links, claims, rewards, repeating tasks, and transactions live in the same local state file. Schema 6 migrates older data automatically; tasks saved as Sidequests by earlier builds become regular tasks, and Coins they earned are kept. No personal starting quests or tasks are included in the source or app bundle.
 
 ## Download
 
