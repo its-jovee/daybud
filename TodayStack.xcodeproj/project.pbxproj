@@ -10,6 +10,8 @@
 		B10000000000000000000001 /* QuestSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001; };
 		B10000000000000000000002 /* QuestViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002; };
 		B10000000000000000000003 /* QuestSystemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003; };
+		C10000000000000000000001 /* RepeatingTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001; };
+		C10000000000000000000002 /* RepeatingTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002; };
 		A10000000000000000000001 /* TodayStackApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* TodayStackApp.swift */; };
 		A10000000000000000000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* Models.swift */; };
 		A10000000000000000000003 /* JSONStateRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* JSONStateRepository.swift */; };
@@ -35,6 +37,8 @@
 		B20000000000000000000001 /* QuestSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestSystem.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* QuestViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestViews.swift; sourceTree = "<group>"; };
 		B20000000000000000000003 /* QuestSystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuestSystemTests.swift; sourceTree = "<group>"; };
+		C20000000000000000000001 /* RepeatingTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepeatingTasks.swift; sourceTree = "<group>"; };
+		C20000000000000000000002 /* RepeatingTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepeatingTaskTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000001 /* TodayStackApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayStackApp.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		A20000000000000000000003 /* JSONStateRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONStateRepository.swift; sourceTree = "<group>"; };
@@ -104,6 +108,7 @@
 				A20000000000000000000019 /* ActivityProfileView.swift */,
 				B20000000000000000000001 /* QuestSystem.swift */,
 				B20000000000000000000002 /* QuestViews.swift */,
+				C20000000000000000000001 /* RepeatingTasks.swift */,
 				A20000000000000000000010 /* Assets.xcassets */,
 				A20000000000000000000009 /* Info.plist */,
 			);
@@ -117,6 +122,7 @@
 				A20000000000000000000016 /* PomodoroEngineTests.swift */,
 				A20000000000000000000017 /* StatisticsCalculatorTests.swift */,
 				B20000000000000000000003 /* QuestSystemTests.swift */,
+				C20000000000000000000002 /* RepeatingTaskTests.swift */,
 			);
 			path = TodayStackTests;
 			sourceTree = "<group>";
@@ -247,6 +253,7 @@
 				A10000000000000000000019 /* ActivityProfileView.swift in Sources */,
 				B10000000000000000000001 /* QuestSystem.swift in Sources */,
 				B10000000000000000000002 /* QuestViews.swift in Sources */,
+				C10000000000000000000001 /* RepeatingTasks.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -258,6 +265,7 @@
 				A10000000000000000000016 /* PomodoroEngineTests.swift in Sources */,
 				A10000000000000000000017 /* StatisticsCalculatorTests.swift in Sources */,
 				B10000000000000000000003 /* QuestSystemTests.swift in Sources */,
+				C10000000000000000000002 /* RepeatingTaskTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

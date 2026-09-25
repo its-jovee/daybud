@@ -192,7 +192,7 @@ struct QuestHubView: View {
                         }
                         Menu("More") {
                             Button("Archive quest") { store.setQuestStatus(id: quest.id, status: .archived) }
-                            Button("Make actions Sidequests & archive") { store.setQuestStatus(id: quest.id, status: .archived, demoteTasks: true) }
+                            Button("Archive & detach actions") { store.setQuestStatus(id: quest.id, status: .archived, demoteTasks: true) }
                         }.fixedSize()
                     } else {
                         Button("Activate") { store.setQuestStatus(id: quest.id, status: .active) }
@@ -375,7 +375,7 @@ struct RewardShopView: View {
                         Spacer()
                         Toggle("Archived", isOn: $showArchived).toggleStyle(.checkbox).font(.caption)
                     }
-                    Text("Main action +10 · New progress +10/day\nSidequest +2 · Habit +1/day · Main Quest complete +50")
+                    Text("Main action +10 · New progress +10/day\nHabit +1/day · Main Quest complete +50")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }.padding(14).controlSize(.small)
@@ -426,7 +426,7 @@ struct QuestWeeklyReviewView: View {
                 }
             }
             if state.quests.isEmpty { Text("Choose a Main Quest to start your weekly review.").font(.caption).foregroundStyle(.secondary) }
-            Text("\(Set(activities.filter(\.isMainProgress).map(\.date)).count) Main Quest days · \(activities.filter { $0.kind == .mainAction }.count) main actions · \(activities.filter { $0.kind == .sidequest }.count) Sidequests")
+            Text("\(Set(activities.filter(\.isMainProgress).map(\.date)).count) Main Quest days · \(activities.filter { $0.kind == .mainAction }.count) main actions")
                 .font(.caption).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Text("Earned \(transactions.filter { $0.amount > 0 }.reduce(0) { $0 + $1.amount })")

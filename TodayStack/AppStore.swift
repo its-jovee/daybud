@@ -65,7 +65,6 @@ public final class AppStore: ObservableObject {
 
     public var currentTask: TaskItem? {
         todayPlan.tasks.first(where: { !$0.isCompleted && isMainAction($0) })
-            ?? todayPlan.tasks.first(where: { !$0.isCompleted && $0.purpose != .sidequest })
             ?? todayPlan.tasks.first(where: { !$0.isCompleted })
     }
 
@@ -220,7 +219,8 @@ public final class AppStore: ObservableObject {
         title: String,
         habitID: String? = nil,
         durationMinutes: Int = TaskItem.defaultDurationMinutes,
-        purpose: TaskPurpose = .regular
+        purpose: TaskPurpose = .regular,
+        repeatSchedule: RepeatSchedule? = nil
     ) -> String? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -234,9 +234,12 @@ public final class AppStore: ObservableObject {
             habitID: validHabitID(habitID),
             durationMinutes: durationMinutes
         )
-        return questChange { draft in
+        return applyChange { draft in
             draft.days[todayDateKey, default: DayPlan(date: todayDateKey)].tasks.append(task)
             try QuestEngine.assign(taskID: task.id, purpose: purpose, date: todayDateKey, state: &draft)
+            if let repeatSchedule {
+                try RepeatingTaskEngine.setRepeat(taskID: task.id, schedule: repeatSchedule, date: todayDateKey, state: &draft)
+            }
         } ? task.id : nil
     }
 
@@ -249,14 +252,16 @@ public final class AppStore: ObservableObject {
         guard !persistenceBlocked, var plan = state.days[todayDateKey], let index = plan.tasks.firstIndex(where: { $0.id == id }) else { return }
         plan.tasks[index].title = trimmed
         state.days[todayDateKey] = plan
+        RepeatingTaskEngine.syncRoutine(fromTaskID: id, date: todayDateKey, state: &state)
         persist()
     }
 
     public func updateTaskDuration(id: String, durationMinutes: Int) {
         guard !persistenceBlocked, var plan = state.days[todayDateKey],
               let index = plan.tasks.firstIndex(where: { $0.id == id }) else { return }
-        plan.tasks[index].durationMinutes = min(max(durationMinutes, 1), 24 * 60)
+        plan.tasks[index].durationMinutes = TaskItem.normalizedDuration(durationMinutes)
         state.days[todayDateKey] = plan
+        RepeatingTaskEngine.syncRoutine(fromTaskID: id, date: todayDateKey, state: &state)
         persist()
     }
 
@@ -302,8 +307,10 @@ public final class AppStore: ObservableObject {
     public func moveTaskToLater(id: String) {
         guard !persistenceBlocked, var plan = state.days[todayDateKey],
               let sourceIndex = plan.tasks.firstIndex(where: { $0.id == id && !$0.isCompleted }) else { return }
-        let task = plan.tasks.remove(at: sourceIndex)
+        var task = plan.tasks.remove(at: sourceIndex)
         archiveFocusIfNeeded(for: task, outcome: .stopped)
+        // A parked copy is a one-off; the repeating task still returns on its next scheduled day.
+        task.repeatingTaskID = nil
         state.days[todayDateKey] = plan
         state.laterTasks.append(task)
         persist()
@@ -367,6 +374,7 @@ public final class AppStore: ObservableObject {
         if task.isCompleted {
             synchronizeTaskSession(taskID: task.id, date: todayDateKey, habitID: task.habitID, completed: true)
         }
+        RepeatingTaskEngine.syncRoutine(fromTaskID: id, date: todayDateKey, state: &state)
         persist()
     }
 
@@ -428,6 +436,9 @@ public final class AppStore: ObservableObject {
                 if updated.habitID == id { updated.habitID = nil }
                 return updated
             } ?? []
+        }
+        for index in state.repeatingTasks.indices where state.repeatingTasks[index].habitID == id {
+            state.repeatingTasks[index].habitID = nil
         }
         state.sessions.removeAll(where: { $0.habitID == id })
         persist()
@@ -538,8 +549,11 @@ public final class AppStore: ObservableObject {
 
     private func ensureTodayPlan(persist shouldPersist: Bool) {
         guard state.days[todayDateKey] == nil else { return }
+        // A repeating task gets a fresh occurrence on each scheduled day, so an
+        // unfinished earlier occurrence is replaced rather than carried.
+        let repeatingTaskIDs = Set(state.repeatingTasks.map(\.id))
         let carriedTasks = mostRecentPlan(before: todayDateKey)?.tasks
-            .filter { !$0.isCompleted }
+            .filter { !$0.isCompleted && !($0.repeatingTaskID.map(repeatingTaskIDs.contains) ?? false) }
             .map { task in
                 TaskItem(
                     lineageID: task.lineageID,
@@ -549,7 +563,8 @@ public final class AppStore: ObservableObject {
                     purpose: task.purpose
                 )
             } ?? []
-        state.days[todayDateKey] = DayPlan(date: todayDateKey, tasks: carriedTasks)
+        let repeatingTasks = RepeatingTaskEngine.occurrences(on: todayDateKey, state: state, calendar: calendar)
+        state.days[todayDateKey] = DayPlan(date: todayDateKey, tasks: repeatingTasks + carriedTasks)
         if shouldPersist { persist() }
     }
 
@@ -726,40 +741,65 @@ public final class AppStore: ObservableObject {
 
     @discardableResult
     public func saveQuest(_ quest: MainQuest, attachingTaskID: String? = nil) -> Bool {
-        questChange { draft in
+        applyChange { draft in
             try QuestEngine.saveQuest(quest, state: &draft)
             if let attachingTaskID {
                 try QuestEngine.assign(taskID: attachingTaskID, purpose: .mainQuest(quest.id), date: todayDateKey, state: &draft)
+                RepeatingTaskEngine.syncRoutine(fromTaskID: attachingTaskID, date: todayDateKey, state: &draft)
             }
         }
     }
 
     @discardableResult
     public func assignTask(id: String, purpose: TaskPurpose) -> Bool {
-        questChange { try QuestEngine.assign(taskID: id, purpose: purpose, date: todayDateKey, state: &$0) }
+        applyChange { draft in
+            try QuestEngine.assign(taskID: id, purpose: purpose, date: todayDateKey, state: &draft)
+            RepeatingTaskEngine.syncRoutine(fromTaskID: id, date: todayDateKey, state: &draft)
+        }
     }
 
     @discardableResult
     public func updateQuestProgress(id: String, value: Double) -> Bool {
-        questChange { try QuestEngine.updateProgress(id: id, value: value, date: todayDateKey, now: nowProvider(), state: &$0) }
+        applyChange { try QuestEngine.updateProgress(id: id, value: value, date: todayDateKey, now: nowProvider(), state: &$0) }
     }
 
     @discardableResult
     public func setQuestStatus(id: String, status: MainQuest.Status, demoteTasks: Bool = false) -> Bool {
-        questChange { try QuestEngine.setStatus(id: id, status: status, demoteTasks: demoteTasks, date: todayDateKey, now: nowProvider(), state: &$0) }
+        applyChange { try QuestEngine.setStatus(id: id, status: status, demoteTasks: demoteTasks, date: todayDateKey, now: nowProvider(), state: &$0) }
     }
 
     @discardableResult
     public func saveReward(_ reward: QuestReward) -> Bool {
-        questChange { try QuestEngine.saveReward(reward, state: &$0) }
+        applyChange { try QuestEngine.saveReward(reward, state: &$0) }
     }
 
     @discardableResult
     public func redeemReward(id: String, requestID: String) -> Bool {
-        questChange { try QuestEngine.redeem(id: id, requestID: requestID, date: todayDateKey, now: nowProvider(), state: &$0) }
+        applyChange { try QuestEngine.redeem(id: id, requestID: requestID, date: todayDateKey, now: nowProvider(), state: &$0) }
     }
 
-    private func questChange(_ change: (inout AppState) throws -> Void) -> Bool {
+    public func repeatingTask(for task: TaskItem) -> RepeatingTask? {
+        guard let id = task.repeatingTaskID else { return nil }
+        return state.repeatingTasks.first { $0.id == id }
+    }
+
+    /// Starts, reschedules or (with `nil`) stops repeating one of today's tasks.
+    @discardableResult
+    public func setTaskRepeat(id: String, schedule: RepeatSchedule?) -> Bool {
+        applyChange { try RepeatingTaskEngine.setRepeat(taskID: id, schedule: schedule, date: todayDateKey, state: &$0) }
+    }
+
+    @discardableResult
+    public func updateRepeatingTask(_ routine: RepeatingTask) -> Bool {
+        applyChange { try RepeatingTaskEngine.update(routine, date: todayDateKey, state: &$0) }
+    }
+
+    @discardableResult
+    public func stopRepeatingTask(id: String) -> Bool {
+        applyChange { RepeatingTaskEngine.stop(id: id, date: todayDateKey, state: &$0) }
+    }
+
+    private func applyChange(_ change: (inout AppState) throws -> Void) -> Bool {
         guard !persistenceBlocked else { return false }
         do {
             var draft = state

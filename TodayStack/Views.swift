@@ -107,7 +107,9 @@ enum HabitColorCatalog {
 private enum ActivePanel {
     case addTask
     case addTaskForHabit(Habit)
+    case addRepeatingTaskForHabit(Habit)
     case editTask(TaskItem)
+    case editRepeatingTask(RepeatingTask)
     case pomodoroSettings
     case addHabit
     case editHabit(Habit)
@@ -115,7 +117,7 @@ private enum ActivePanel {
 
     var belongsToTodaySection: Bool {
         switch self {
-        case .addTask, .addTaskForHabit, .editTask, .pomodoroSettings:
+        case .addTask, .addTaskForHabit, .addRepeatingTaskForHabit, .editTask, .editRepeatingTask, .pomodoroSettings:
             return true
         case .addHabit, .editHabit, .deleteHabit:
             return false
@@ -230,6 +232,10 @@ struct MenuBarRootView: View {
                         selectedTab = .active
                         showPanel(.addTaskForHabit(habit))
                     },
+                    onPlanRepeatingTask: { habit in
+                        selectedTab = .active
+                        showPanel(.addRepeatingTaskForHabit(habit))
+                    },
                     onEdit: { showPanel(.editHabit($0)) },
                     onDelete: { showPanel(.deleteHabit($0)) }
                 )
@@ -248,6 +254,7 @@ struct MenuBarRootView: View {
                     onFocusSettings: { showPanel(.pomodoroSettings) },
                     onConvertToQuest: { task in convertingTask = task; selectedDetailPage = .quests },
                     onEdit: { showPanel(.editTask($0)) },
+                    onEditRepeatingTask: { showPanel(.editRepeatingTask($0)) },
                     onDelete: { id in
                         withAnimation(.snappy(duration: 0.24)) {
                             store.deleteTask(id: id)
@@ -313,29 +320,37 @@ struct MenuBarRootView: View {
     private func inlinePanel(_ panel: ActivePanel) -> some View {
         switch panel {
         case .addTask:
-            TaskEditorView(habits: store.state.habits, quests: store.state.questSystem.activeQuests, onCancel: closePanel) { title, habitID, durationMinutes, purpose in
-                if store.addTask(title: title, habitID: habitID, durationMinutes: durationMinutes, purpose: purpose) != nil { closePanel() }
-            }
-            .id("add-task")
+            taskEditor(draft: TaskDraft(), onSave: saveNewTask)
+                .id("add-task")
         case .addTaskForHabit(let habit):
-            TaskEditorView(
-                habits: store.state.habits,
-                quests: store.state.questSystem.activeQuests,
-                preselectedHabitID: habit.id,
-                onCancel: closePanel
-            ) { title, habitID, durationMinutes, purpose in
-                if store.addTask(title: title, habitID: habitID, durationMinutes: durationMinutes, purpose: purpose) != nil { closePanel() }
-            }
-            .id("add-task-for-habit-\(habit.id)")
+            taskEditor(draft: TaskDraft(habitID: habit.id), onSave: saveNewTask)
+                .id("add-task-for-habit-\(habit.id)")
+        case .addRepeatingTaskForHabit(let habit):
+            taskEditor(draft: TaskDraft(title: habit.name, habitID: habit.id, schedule: .everyDay), onSave: saveNewTask)
+                .id("add-repeating-task-for-habit-\(habit.id)")
         case .editTask(let task):
-            TaskEditorView(task: task, habits: store.state.habits, quests: store.state.questSystem.activeQuests, onCancel: closePanel) { title, habitID, durationMinutes, purpose in
-                if purpose != task.purpose && !store.assignTask(id: task.id, purpose: purpose) { return }
-                store.updateTaskTitle(id: task.id, title: title)
-                store.setTaskHabit(id: task.id, habitID: habitID)
-                store.updateTaskDuration(id: task.id, durationMinutes: durationMinutes)
+            taskEditor(mode: .editTask, draft: TaskDraft(task: task, schedule: store.repeatingTask(for: task)?.schedule)) { draft in
+                if draft.purpose != task.purpose && !store.assignTask(id: task.id, purpose: draft.purpose) { return }
+                store.updateTaskTitle(id: task.id, title: draft.title)
+                store.setTaskHabit(id: task.id, habitID: draft.habitID)
+                store.updateTaskDuration(id: task.id, durationMinutes: draft.durationMinutes)
+                if draft.schedule != store.repeatingTask(for: task)?.schedule
+                    && !store.setTaskRepeat(id: task.id, schedule: draft.schedule) { return }
                 closePanel()
             }
             .id("edit-task-\(task.id)")
+        case .editRepeatingTask(let routine):
+            taskEditor(mode: .editRepeatingTask, draft: TaskDraft(routine: routine)) { draft in
+                guard let schedule = draft.schedule else { return }
+                var edited = routine
+                edited.title = draft.title
+                edited.habitID = draft.habitID
+                edited.durationMinutes = draft.durationMinutes
+                edited.purpose = draft.purpose
+                edited.schedule = schedule
+                if store.updateRepeatingTask(edited) { closePanel() }
+            }
+            .id("edit-repeating-task-\(routine.id)")
         case .pomodoroSettings:
             PomodoroSettingsView(
                 settings: store.state.pomodoro.settings,
@@ -366,6 +381,33 @@ struct MenuBarRootView: View {
             }
             .id("delete-habit-\(habit.id)")
         }
+    }
+
+    private func taskEditor(
+        mode: TaskEditorView.Mode = .add,
+        draft: TaskDraft,
+        onSave: @escaping (TaskDraft) -> Void
+    ) -> TaskEditorView {
+        TaskEditorView(
+            mode: mode,
+            draft: draft,
+            habits: store.state.habits,
+            quests: store.state.questSystem.activeQuests,
+            calendar: store.calendar,
+            onCancel: closePanel,
+            onSave: onSave
+        )
+    }
+
+    private func saveNewTask(_ draft: TaskDraft) {
+        let id = store.addTask(
+            title: draft.title,
+            habitID: draft.habitID,
+            durationMinutes: draft.durationMinutes,
+            purpose: draft.purpose,
+            repeatSchedule: draft.schedule
+        )
+        if id != nil { closePanel() }
     }
 
     private func showPanel(_ panel: ActivePanel) {
@@ -532,13 +574,13 @@ private struct TodaySectionView<InlineEditor: View>: View {
     @State private var isDropOverToday = false
     @State private var isDropOverLater = false
     @State private var isLaterExpanded = false
-    @State private var isSidequestsExpanded = false
     @State private var completingTaskIDs: Set<String> = []
     let selectedTab: TaskListTab
     let onAdd: () -> Void
     let onFocusSettings: () -> Void
     let onConvertToQuest: (TaskItem) -> Void
     let onEdit: (TaskItem) -> Void
+    let onEditRepeatingTask: (RepeatingTask) -> Void
     let onDelete: (String) -> Void
     let inlineEditor: () -> InlineEditor
 
@@ -586,6 +628,21 @@ private struct TodaySectionView<InlineEditor: View>: View {
             if selectedTab == .active {
                 laterSection
                     .transition(.opacity)
+
+                if !store.state.repeatingTasks.isEmpty {
+                    RepeatingTasksShelf(
+                        routines: store.state.repeatingTasks,
+                        habits: store.state.habits,
+                        calendar: store.calendar,
+                        onEdit: onEditRepeatingTask,
+                        onStop: { routine in
+                            withAnimation(.snappy(duration: 0.22)) {
+                                _ = store.stopRepeatingTask(id: routine.id)
+                            }
+                        }
+                    )
+                    .transition(.opacity)
+                }
             }
         }
         .coordinateSpace(name: "today-task-list")
@@ -614,13 +671,9 @@ private struct TodaySectionView<InlineEditor: View>: View {
                 VStack(spacing: 2) {
                     ForEach(Array(visibleTasks.enumerated()), id: \.element.id) { index, task in
                         if selectedTab == .active && (index == 0 || priority(visibleTasks[index - 1]) != priority(task)) {
-                            if task.purpose == .sidequest {
-                                sidequestHeader
-                            } else {
-                            Text(store.isMainAction(task) ? "MAIN QUEST ACTIONS" : task.purpose == .sidequest ? "SIDEQUESTS" : "TASKS & ROUTINES")
+                            Text(store.isMainAction(task) ? "MAIN QUEST ACTIONS" : "TASKS & ROUTINES")
                                 .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 7).padding(.top, 6)
-                            }
                         }
                         dragEnabledTodayRow(TaskRowView(
                             task: task,
@@ -628,6 +681,7 @@ private struct TodaySectionView<InlineEditor: View>: View {
                             isCompleting: completingTaskIDs.contains(task.id),
                             habits: store.state.habits,
                             quests: store.state.questSystem.activeQuests,
+                            repeatLabel: store.repeatingTask(for: task)?.schedule.label(calendar: store.calendar),
                             onAssignPurpose: { store.assignTask(id: task.id, purpose: $0) },
                             onConvertToQuest: { onConvertToQuest(task) },
                             onToggle: { completed in toggleTask(task, completed: completed) },
@@ -645,6 +699,11 @@ private struct TodaySectionView<InlineEditor: View>: View {
                                 }
                             },
                             onEdit: { onEdit(task) },
+                            onStopRepeating: {
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    _ = store.setTaskRepeat(id: task.id, schedule: nil)
+                                }
+                            },
                             onDelete: { onDelete(task.id) }
                         ), taskID: task.id)
                         .transition(tabTransition)
@@ -678,9 +737,6 @@ private struct TodaySectionView<InlineEditor: View>: View {
                 .animation(.snappy(duration: 0.24), value: store.todayPlan.tasks)
                 .padding(.horizontal, 8)
             }
-            if selectedTab == .active && (!isSidequestsExpanded || sidequestCount == 0) {
-                sidequestHeader.padding(.horizontal, 8)
-            }
         }
         .frame(maxWidth: .infinity, minHeight: 42, alignment: .topLeading)
         .background {
@@ -698,28 +754,6 @@ private struct TodaySectionView<InlineEditor: View>: View {
                     .padding(.horizontal, 6)
             }
         }
-    }
-
-    private var sidequestHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { isSidequestsExpanded.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: isSidequestsExpanded ? "chevron.down" : "chevron.right")
-                    Text("Sidequests · \(sidequestCount)")
-                    Spacer()
-                    if store.hasMainProgressToday { Label("Enjoy exploring", systemImage: "checkmark.circle").foregroundStyle(.green) }
-                }.font(.caption).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel(isSidequestsExpanded ? "Collapse Sidequests" : "Expand Sidequests")
-                .accessibilityValue("\(sidequestCount) tasks. \(store.hasMainProgressToday ? "Main Quest advanced today. Enjoy exploring." : "Always available.")")
-            if !store.hasMainProgressToday {
-                Text("Main Quest first — Sidequests feel better afterwards.")
-                    .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
-            } else if isSidequestsExpanded && sidequestCount == 0 {
-                Text("Mark any task as a Sidequest in its Priority menu.").font(.caption2).foregroundStyle(.secondary)
-            }
-        }.padding(.horizontal, 6).padding(.vertical, 7)
     }
 
     private var laterSection: some View {
@@ -831,7 +865,7 @@ private struct TodaySectionView<InlineEditor: View>: View {
 
     private var visibleTasks: [TaskItem] {
         store.todayPlan.tasks.filter { task in
-            selectedTab == .done ? task.isCompleted : (!task.isCompleted && (task.purpose != .sidequest || isSidequestsExpanded))
+            selectedTab == .done ? task.isCompleted : !task.isCompleted
         }
         .enumerated().sorted {
             let left = priority($0.element), right = priority($1.element)
@@ -839,10 +873,8 @@ private struct TodaySectionView<InlineEditor: View>: View {
         }.map(\.element)
     }
 
-    private var sidequestCount: Int { store.todayPlan.tasks.filter { !$0.isCompleted && $0.purpose == .sidequest }.count }
-
     private func priority(_ task: TaskItem) -> Int {
-        store.isMainAction(task) ? 0 : task.purpose == .sidequest ? 2 : 1
+        store.isMainAction(task) ? 0 : 1
     }
 
     private func isFocused(_ task: TaskItem) -> Bool {
@@ -862,7 +894,6 @@ private struct TodaySectionView<InlineEditor: View>: View {
     private var emptyMessage: String {
         switch selectedTab {
         case .active:
-            if sidequestCount > 0 { return "Your Sidequests are below" }
             return store.todayPlan.tasks.isEmpty ? "Nothing planned yet" : "All tasks are done"
         case .done:
             return "Completed tasks land here"
@@ -1138,6 +1169,150 @@ private struct LaterTaskRowView: View {
     }
 }
 
+private struct RepeatingTasksShelf: View {
+    @State private var isExpanded = false
+    let routines: [RepeatingTask]
+    let habits: [Habit]
+    let calendar: Calendar
+    let onEdit: (RepeatingTask) -> Void
+    let onStop: (RepeatingTask) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.snappy(duration: 0.24)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "repeat")
+                        .foregroundStyle(.secondary)
+                    Text("Repeating")
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(routines.count)")
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.07), in: Capsule())
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "Collapse Repeating" : "Expand Repeating")
+            .accessibilityValue("\(routines.count) repeating \(routines.count == 1 ? "task" : "tasks")")
+
+            if isExpanded {
+                VStack(spacing: 2) {
+                    ForEach(routines) { routine in
+                        RepeatingTaskRowView(
+                            routine: routine,
+                            habits: habits,
+                            calendar: calendar,
+                            onEdit: { onEdit(routine) },
+                            onStop: { onStop(routine) }
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .padding(.horizontal, 1)
+                .padding(.bottom, 5)
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.top, 3)
+        .background {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(Color.primary.opacity(0.025))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        }
+        .padding(.horizontal, 8)
+        .animation(.snappy(duration: 0.24), value: routines)
+    }
+}
+
+private struct RepeatingTaskRowView: View {
+    @State private var isHovered = false
+    let routine: RepeatingTask
+    let habits: [Habit]
+    let calendar: Calendar
+    let onEdit: () -> Void
+    let onStop: () -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "repeat")
+                .foregroundStyle(.tertiary)
+                .imageScale(.small)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(routine.title)
+                    .font(.callout)
+                    .lineLimit(2)
+                Text("\(routine.schedule.label(calendar: calendar)) · \(DurationText.string(minutes: routine.durationMinutes))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            if let linkedHabit {
+                Image(systemName: linkedHabit.iconName ?? HabitIconCatalog.suggestedSymbol(for: linkedHabit.name))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(linkedHabitColor)
+                    .frame(width: 19, height: 19)
+                    .background(linkedHabitColor.opacity(0.11), in: Circle())
+                    .allowsHitTesting(false)
+                    .help("Counts toward \(linkedHabit.name)")
+                    .accessibilityLabel("Counts toward \(linkedHabit.name)")
+            }
+
+            Spacer(minLength: 0)
+
+            Menu {
+                Button("Edit repeating task", action: onEdit)
+                Divider()
+                Button("Stop repeating", role: .destructive, action: onStop)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .foregroundStyle(.tertiary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .accessibilityLabel("More actions for \(routine.title)")
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 6)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(isHovered ? 0.05 : 0.018))
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .animation(.easeInOut(duration: 0.14), value: isHovered)
+    }
+
+    private var linkedHabit: Habit? {
+        guard let habitID = routine.habitID else { return nil }
+        return habits.first(where: { $0.id == habitID })
+    }
+
+    private var linkedHabitColor: Color {
+        guard let linkedHabit else { return .accentColor }
+        return HabitColorCatalog.color(for: linkedHabit, in: habits)
+    }
+}
+
 private struct TaskRowView: View {
     @State private var isHovered = false
     let task: TaskItem
@@ -1145,6 +1320,8 @@ private struct TaskRowView: View {
     let isCompleting: Bool
     let habits: [Habit]
     let quests: [MainQuest]
+    /// The schedule label when this task repeats, such as "Weekdays".
+    let repeatLabel: String?
     let onAssignPurpose: (TaskPurpose) -> Void
     let onConvertToQuest: () -> Void
     let onToggle: (Bool) -> Void
@@ -1154,6 +1331,7 @@ private struct TaskRowView: View {
     let onStartFocus: () -> Void
     let onMoveToLater: () -> Void
     let onEdit: () -> Void
+    let onStopRepeating: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -1199,9 +1377,17 @@ private struct TaskRowView: View {
                             .accessibilityLabel("Counts toward \(linkedHabit.name)")
                     }
                 }
-                Text(DurationText.string(minutes: task.durationMinutes))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(task.isCompleted ? .tertiary : .secondary)
+                HStack(spacing: 6) {
+                    Text(DurationText.string(minutes: task.durationMinutes))
+                    if let repeatLabel {
+                        Label(repeatLabel, systemImage: "repeat")
+                            .labelStyle(.titleAndIcon)
+                            .help("Repeats: \(repeatLabel)")
+                            .accessibilityLabel("Repeats \(repeatLabel)")
+                    }
+                }
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(task.isCompleted ? .tertiary : .secondary)
             }
 
             Spacer(minLength: 0)
@@ -1221,7 +1407,6 @@ private struct TaskRowView: View {
             Menu {
                 Menu("Priority") {
                     Button("Regular task") { onAssignPurpose(.regular) }
-                    Button("Sidequest") { onAssignPurpose(.sidequest) }
                     Divider()
                     ForEach(quests) { quest in
                         Button("\(quest.emoji) \(quest.title)") { onAssignPurpose(.mainQuest(quest.id)) }
@@ -1241,7 +1426,11 @@ private struct TaskRowView: View {
                     Divider()
                 }
                 Button("Edit task", action: onEdit)
-                Button("Delete task", role: .destructive, action: onDelete)
+                if repeatLabel != nil {
+                    Button("Stop repeating", action: onStopRepeating)
+                }
+                // Removing today's copy of a repeating task skips it; it returns on its next scheduled day.
+                Button(repeatLabel != nil && !task.isCompleted ? "Skip today" : "Delete task", role: .destructive, action: onDelete)
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .foregroundStyle(.secondary)
@@ -1314,6 +1503,7 @@ private struct HabitsSectionView: View {
     @State private var completingHabitIDs: Set<String> = []
     let onAdd: () -> Void
     let onPlanTask: (Habit) -> Void
+    let onPlanRepeatingTask: (Habit) -> Void
     let onEdit: (Habit) -> Void
     let onDelete: (Habit) -> Void
 
@@ -1377,6 +1567,7 @@ private struct HabitsSectionView: View {
                             }
                         },
                         onPlanTask: { onPlanTask(habit) },
+                        onPlanRepeatingTask: { onPlanRepeatingTask(habit) },
                         onEdit: { onEdit(habit) },
                         onDelete: { onDelete(habit) }
                     )
@@ -1450,6 +1641,7 @@ private struct HabitActivityTile: View {
     let onToggle: () -> Void
     let onChangeIcon: (String) -> Void
     let onPlanTask: () -> Void
+    let onPlanRepeatingTask: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
 
@@ -1518,6 +1710,7 @@ private struct HabitActivityTile: View {
             toggleIfAllowed()
         }
         .accessibilityAction(named: "Plan a task for today", onPlanTask)
+        .accessibilityAction(named: "Plan a repeating task", onPlanRepeatingTask)
         .accessibilityAction(named: "Edit habit", onEdit)
     }
 
@@ -1618,6 +1811,7 @@ private struct HabitActivityTile: View {
     private var actionsMenu: some View {
         Menu {
             Button("Plan a task for today", systemImage: "plus.square.on.square", action: onPlanTask)
+            Button("Plan a repeating task", systemImage: "repeat", action: onPlanRepeatingTask)
             Divider()
             Button("Edit habit", action: onEdit)
             Button("Delete habit", role: .destructive, action: onDelete)
@@ -1800,51 +1994,103 @@ private struct MonthCell {
     let isFuture: Bool
 }
 
+/// The editable details of a task, or of a repeating task when `schedule` is set.
+private struct TaskDraft {
+    var title = ""
+    var habitID: String?
+    var durationMinutes = TaskItem.defaultDurationMinutes
+    var purpose: TaskPurpose = .regular
+    var schedule: RepeatSchedule?
+}
+
+extension TaskDraft {
+    init(task: TaskItem, schedule: RepeatSchedule?) {
+        self.init(
+            title: task.title,
+            habitID: task.habitID,
+            durationMinutes: task.durationMinutes,
+            purpose: task.purpose,
+            schedule: schedule
+        )
+    }
+
+    init(routine: RepeatingTask) {
+        self.init(
+            title: routine.title,
+            habitID: routine.habitID,
+            durationMinutes: routine.durationMinutes,
+            purpose: routine.purpose,
+            schedule: routine.schedule
+        )
+    }
+}
+
 private struct TaskEditorView: View {
+    enum Mode {
+        case add
+        case editTask
+        case editRepeatingTask
+    }
+
+    private enum RepeatChoice: Hashable {
+        case never
+        case everyDay
+        case weekdays
+        case custom
+    }
+
     @State private var title: String
     @State private var habitSelection: String
     @State private var durationMinutes: Int
     @State private var purpose: TaskPurpose
+    @State private var repeatChoice: RepeatChoice
+    @State private var customDays: Set<Int>
 
-    let task: TaskItem?
+    let mode: Mode
+    let initialPurpose: TaskPurpose
     let habits: [Habit]
     let quests: [MainQuest]
+    let calendar: Calendar
     let onCancel: () -> Void
-    let onSave: (String, String?, Int, TaskPurpose) -> Void
+    let onSave: (TaskDraft) -> Void
 
     init(
-        task: TaskItem? = nil,
+        mode: Mode = .add,
+        draft: TaskDraft,
         habits: [Habit],
         quests: [MainQuest],
-        preselectedHabitID: String? = nil,
+        calendar: Calendar,
         onCancel: @escaping () -> Void,
-        onSave: @escaping (String, String?, Int, TaskPurpose) -> Void
+        onSave: @escaping (TaskDraft) -> Void
     ) {
-        self.task = task
+        self.mode = mode
+        self.initialPurpose = draft.purpose
         self.habits = habits
         self.quests = quests
+        self.calendar = calendar
         self.onCancel = onCancel
         self.onSave = onSave
-        _title = State(initialValue: task?.title ?? "")
-        _habitSelection = State(initialValue: task?.habitID ?? preselectedHabitID ?? "")
-        _durationMinutes = State(initialValue: task?.durationMinutes ?? TaskItem.defaultDurationMinutes)
-        _purpose = State(initialValue: task?.purpose ?? .regular)
+        _title = State(initialValue: draft.title)
+        _habitSelection = State(initialValue: draft.habitID ?? "")
+        _durationMinutes = State(initialValue: draft.durationMinutes)
+        _purpose = State(initialValue: draft.purpose)
+        _repeatChoice = State(initialValue: Self.choice(for: draft.schedule))
+        _customDays = State(initialValue: Set(draft.schedule?.days ?? RepeatSchedule.weekdays.days))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label(task == nil ? "Add task" : "Edit task", systemImage: task == nil ? "plus.circle" : "pencil")
+            Label(heading.title, systemImage: heading.systemImage)
                 .font(.headline)
             TextField("Task title", text: $title)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(save)
             Picker("Priority", selection: $purpose) {
                 Text("Regular task").tag(TaskPurpose.regular)
-                Text("Sidequest").tag(TaskPurpose.sidequest)
                 ForEach(quests) { quest in
                     Text("\(quest.emoji) \(quest.title)").tag(TaskPurpose.mainQuest(quest.id))
                 }
-                if let id = task?.purpose.questID, !quests.contains(where: { $0.id == id }) {
+                if let id = initialPurpose.questID, !quests.contains(where: { $0.id == id }) {
                     Text("Previous Main Quest").tag(TaskPurpose.mainQuest(id))
                 }
             }.pickerStyle(.menu)
@@ -1860,6 +2106,36 @@ private struct TaskEditorView: View {
                 }
                 .accessibilityLabel("Task duration")
                 .accessibilityValue(DurationText.string(minutes: durationMinutes))
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("Repeat", selection: $repeatChoice) {
+                    if mode != .editRepeatingTask {
+                        Text("Never").tag(RepeatChoice.never)
+                    }
+                    Text("Every day").tag(RepeatChoice.everyDay)
+                    Text("Weekdays").tag(RepeatChoice.weekdays)
+                    Text("Custom").tag(RepeatChoice.custom)
+                }
+                .pickerStyle(.menu)
+
+                if repeatChoice == .custom {
+                    WeekdayPicker(selection: $customDays, calendar: calendar)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if let repeatHint {
+                    Text(repeatHint)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+            .animation(.easeInOut(duration: 0.18), value: repeatChoice)
+            .onChange(of: repeatChoice) { oldChoice, newChoice in
+                // Start a custom schedule from the preset it replaces.
+                guard newChoice == .custom, let preset = Self.preset(for: oldChoice) else { return }
+                customDays = Set(preset.days)
             }
             VStack(alignment: .leading, spacing: 5) {
                 Label("Counts toward", systemImage: "arrow.triangle.branch")
@@ -1891,9 +2167,9 @@ private struct TaskEditorView: View {
                 Spacer()
                 Button("Cancel", role: .cancel, action: onCancel)
                     .keyboardShortcut(.cancelAction)
-                Button(task == nil ? "Add" : "Save", action: save)
+                Button(mode == .add ? "Add" : "Save", action: save)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!canSave)
             }
         }
         .padding(12)
@@ -1901,14 +2177,91 @@ private struct TaskEditorView: View {
         .padding(.horizontal, 10)
     }
 
+    private var heading: (title: String, systemImage: String) {
+        switch mode {
+        case .add: return ("Add task", "plus.circle")
+        case .editTask: return ("Edit task", "pencil")
+        case .editRepeatingTask: return ("Edit repeating task", "repeat")
+        }
+    }
+
+    private var schedule: RepeatSchedule? {
+        repeatChoice == .custom ? RepeatSchedule(days: customDays) : Self.preset(for: repeatChoice)
+    }
+
+    private var repeatHint: String? {
+        guard let schedule else { return nil }
+        guard !schedule.isEmpty else { return "Choose at least one day." }
+        let when = schedule == .everyDay ? "every day"
+            : schedule == .weekdays ? "on weekdays"
+            : schedule == .weekends ? "on weekends"
+            : "on \(schedule.label(calendar: calendar))"
+        return "Added to Today \(when), even after you finish it."
+    }
+
+    private var canSave: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && schedule?.isEmpty != true
+    }
+
     private func save() {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        onSave(trimmed, habitSelection.isEmpty ? nil : habitSelection, durationMinutes, purpose)
+        guard canSave else { return }
+        onSave(TaskDraft(
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            habitID: habitSelection.isEmpty ? nil : habitSelection,
+            durationMinutes: durationMinutes,
+            purpose: purpose,
+            schedule: schedule
+        ))
     }
 
     private var selectedHabit: Habit? {
         habits.first(where: { $0.id == habitSelection })
+    }
+
+    private static func choice(for schedule: RepeatSchedule?) -> RepeatChoice {
+        guard let schedule else { return .never }
+        if schedule == .everyDay { return .everyDay }
+        if schedule == .weekdays { return .weekdays }
+        return .custom
+    }
+
+    private static func preset(for choice: RepeatChoice) -> RepeatSchedule? {
+        switch choice {
+        case .never, .custom: return nil
+        case .everyDay: return .everyDay
+        case .weekdays: return .weekdays
+        }
+    }
+}
+
+private struct WeekdayPicker: View {
+    @Binding var selection: Set<Int>
+    let calendar: Calendar
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(RepeatSchedule.weekOrder(calendar: calendar), id: \.self) { day in
+                let isSelected = selection.contains(day)
+                Button {
+                    withAnimation(.snappy(duration: 0.18)) {
+                        selection.formSymmetricDifference([day])
+                    }
+                } label: {
+                    Text(calendar.veryShortWeekdaySymbols[day - 1])
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isSelected ? Color.white : Color.secondary)
+                        .frame(width: 30, height: 24)
+                        .background(
+                            isSelected ? Color.accentColor : Color.primary.opacity(0.055),
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(calendar.weekdaySymbols[day - 1])
+                .accessibilityLabel(calendar.weekdaySymbols[day - 1])
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
     }
 }
 
